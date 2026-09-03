@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json.schemastore.org/template",
+  "author": "Rodrigo de Oliveira",
+  "classifications": [
+    "Library",
+    ".NET",
+    "C#"
+  ],
+  "identity": "RodriOliveira.DotNet.Library",
+  "name": "Rodrigo Oliveira .NET Library",
+  "shortName": "rodri-lib",
+  "sourceName": "Template.Library",
+  "preferNameDirectory": true,
+  "tags": {
+    "language": "C#",
+    "type": "project"
+  },
+  "sources": [
+    {
+      "source": "./",
+      "target": "./",
+      "exclude": [
+        "**/[Bb]in/**",
+        "**/[Oo]bj/**",
+        ".git/**",
+        ".template.config/**",
+        ".validation/**",
+        "artifacts/**",
+        "TestResults/**",
+        "**/TestResults/**",
+        "**/*.filelist",
+        "**/*.user",
+        "README.md",
+        "README.en.md",
+        ".github/workflows/release.yml",
+        "docs/template-development.md",
+        "docs/repository-administration.md",
+        "packaging/**",
+        ".github/workflows/template-package-validation.yml",
+        ".github/workflows/initialize-repository.yml",
+        ".github/workflows/template-validation.yml",
+        ".github/workflows/sonar-template-validation.yml",
+        ".github/workflows/versioning-validation.yml",
+        ".github/workflows/release-publishing-validation.yml",
+        ".github/workflows/github-template-initialization-validation.yml",
+        "scripts/initialize-repository.sh",
+        "scripts/verify-template-package.cs",
+        "scripts/validate-template-package-e2e.sh"
+      ],
+      "rename": {
+        "docs/library-readme.md": "README.md",
+        "docs/library-release.yml": ".github/workflows/release.yml"
+      }
+    }
+  ]
+}

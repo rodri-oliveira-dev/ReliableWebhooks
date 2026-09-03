@@ -1,0 +1,411 @@
+name: Release
+
+run-name: "Release ${{ inputs.version || 'dry-run' }} from ${{ github.ref_name }} (${{ inputs.publish && 'publish' || 'validation' }})"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/release.yml
+      - scripts/release-candidate.cs
+      - scripts/resolve-release-request.sh
+      - scripts/resolve-nuget-publishing.sh
+      - scripts/verify-package.cs
+      - src/**
+      - tests/**
+      - Directory.Build.props
+      - Directory.Packages.props
+      - Template.Library.slnx
+      - global.json
+      - packages.lock.json
+      - README.md
+      - CHANGELOG.md
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact Semantic Version to validate or publish (for example 1.2.0 or 1.3.0-beta.1).
+        required: true
+        type: string
+      publish:
+        description: Publish the validated package through NuGet Trusted Publishing and GitHub Release.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "release-${{ github.ref }}"
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  build:
+    name: Build release candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: "${{ steps.release-metadata.outputs.version }}"
+      tag: "${{ steps.release-metadata.outputs.tag }}"
+      is-prerelease: "${{ steps.release-metadata.outputs.is_prerelease }}"
+      commit: "${{ steps.release-commit.outputs.commit }}"
+      package-id: "${{ steps.package.outputs.package_id }}"
+      safe-to-publish: "${{ steps.package.outputs.safe_to_publish }}"
+      nuget-publishing-enabled: "${{ steps.nuget-publishing.outputs.nuget_publishing_enabled }}"
+      nuget-publishing-reason: "${{ steps.nuget-publishing.outputs.nuget_publishing_reason }}"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Resolve release metadata
+        id: release-metadata
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REQUESTED_VERSION: ${{ inputs.version || format('0.0.0-ci.{0}', github.run_number) }}
+          PUBLISH_REQUESTED: ${{ inputs.publish || false }}
+        run: bash scripts/resolve-release-request.sh
+
+      - name: Record validated commit
+        id: release-commit
+        run: echo "commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight release tag
+        if: "${{ github.event_name == 'workflow_dispatch' && inputs.publish }}"
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release-metadata.outputs.tag }}
+          VALIDATED_SHA: ${{ steps.release-commit.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" || true
+
+          if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            existing_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [[ "${existing_commit}" != "${VALIDATED_SHA}" ]]; then
+              echo "Tag ${RELEASE_TAG} already points to ${existing_commit}, not validated SHA ${VALIDATED_SHA}." >&2
+              exit 2
+            fi
+          fi
+
+      - name: Restore local tools
+        run: dotnet tool restore
+
+      - name: Restore dependencies in locked mode
+        run: dotnet restore Template.Library.slnx --locked-mode
+
+      - name: Verify formatting
+        run: dotnet format Template.Library.slnx --verify-no-changes --no-restore
+
+      - name: Validate package identity for publication
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          project='src/Template.Library/Template.Library.csproj'
+          package_id="$(dotnet msbuild "$project" -nologo -getProperty:PackageId \
+            | tr -d '\r' \
+            | sed '/^[[:space:]]*$/d' \
+            | tail -n 1)"
+
+          if [[ -z "$package_id" ]]; then
+            echo '::error::PackageId could not be resolved.'
+            exit 1
+          fi
+
+          placeholder_package_id="Template"".""Library"
+          safe_to_publish=true
+
+          if [[ "$package_id" == "$placeholder_package_id" ]]; then
+            safe_to_publish=false
+            echo 'Placeholder package identity detected; NuGet publication is blocked.'
+          fi
+
+          echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
+          echo "safe_to_publish=$safe_to_publish" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve NuGet publishing opt-in
+        id: nuget-publishing
+        shell: bash
+        env:
+          SHOULD_PUBLISH: ${{ steps.release-metadata.outputs.should_publish }}
+          SAFE_TO_PUBLISH: ${{ steps.package.outputs.safe_to_publish }}
+          TEMPLATE_PACKAGE_AVAILABLE: false
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: bash scripts/resolve-nuget-publishing.sh
+
+      - name: Validate resolved MSBuild version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          project='src/Template.Library/Template.Library.csproj'
+
+          resolved_version="$(dotnet msbuild "$project" -nologo -getProperty:Version -p:Version="$RELEASE_VERSION" \
+            | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -n 1)"
+          resolved_package_version="$(dotnet msbuild "$project" -nologo -getProperty:PackageVersion -p:Version="$RELEASE_VERSION" \
+            | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -n 1)"
+
+          if [[ "$resolved_version" != "$RELEASE_VERSION" ]]; then
+            echo "::error::Resolved Version '$resolved_version' differs from release version '$RELEASE_VERSION'."
+            exit 1
+          fi
+
+          if [[ "$resolved_package_version" != "$RELEASE_VERSION" ]]; then
+            echo "::error::Resolved PackageVersion '$resolved_package_version' differs from release version '$RELEASE_VERSION'."
+            exit 1
+          fi
+
+      - name: Build Release
+        env:
+          RELEASE_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: >-
+          dotnet build Template.Library.slnx
+          --configuration Release
+          --no-restore
+          -p:Version="$RELEASE_VERSION"
+
+      - name: Run tests
+        run: dotnet test Template.Library.slnx --configuration Release --no-build
+
+      - name: Pack release package
+        env:
+          RELEASE_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: >-
+          dotnet pack src/Template.Library/Template.Library.csproj
+          --configuration Release
+          --no-build
+          --output artifacts/release
+          -p:Version="$RELEASE_VERSION"
+
+      - name: Validate package, version, assembly metadata, symbols and Source Link
+        env:
+          RELEASE_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: >-
+          dotnet run --file scripts/verify-package.cs -- artifacts/release
+          --require-source-link
+          --expected-version "$RELEASE_VERSION"
+
+      - name: Generate release manifest and checksums
+        env:
+          RELEASE_VERSION: ${{ steps.release-metadata.outputs.version }}
+          RELEASE_TAG: ${{ steps.release-metadata.outputs.tag }}
+          PACKAGE_ID: ${{ steps.package.outputs.package_id }}
+        run: >-
+          dotnet run --file scripts/release-candidate.cs -- manifest
+          --version "$RELEASE_VERSION"
+          --tag "$RELEASE_TAG"
+          --commit "$GITHUB_SHA"
+          --package-id "$PACKAGE_ID"
+          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --output artifacts/release/release-manifest.json
+          --checksums-output artifacts/release/SHA256SUMS
+
+      - name: Upload validated release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: "release-candidate-${{ steps.release-metadata.outputs.version }}"
+          path: artifacts/release
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish official release
+    if: "${{ github.event_name == 'workflow_dispatch' && inputs.publish }}"
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Validate protected publication request
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          VALIDATED_SHA: ${{ needs.build.outputs.commit }}
+          SAFE_TO_PUBLISH: ${{ needs.build.outputs.safe-to-publish }}
+          NUGET_PUBLISHING_ENABLED: ${{ needs.build.outputs.nuget-publishing-enabled }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Official publication is allowed only from refs/heads/main." >&2
+            exit 2
+          fi
+
+          expected_tag="v${RELEASE_VERSION}"
+          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
+            echo "Resolved release tag must be exactly '${expected_tag}'." >&2
+            exit 2
+          fi
+
+          if [[ "$SAFE_TO_PUBLISH" != "true" ]]; then
+            echo "Placeholder package identities cannot be published." >&2
+            exit 2
+          fi
+
+          if [[ "$NUGET_PUBLISHING_ENABLED" != "true" ]]; then
+            echo "NuGet publication is skipped because NUGET_USER is not configured."
+          fi
+
+          if [[ "$VALIDATED_SHA" != "$GITHUB_SHA" ]]; then
+            echo "Build validated ${VALIDATED_SHA}, but publish is running for ${GITHUB_SHA}." >&2
+            exit 2
+          fi
+
+      - name: Checkout exact release commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: "${{ needs.build.outputs.commit }}"
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Download validated release candidate
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: "release-candidate-${{ needs.build.outputs.version }}"
+          path: artifacts/release
+
+      - name: Verify downloaded release candidate
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
+        run: >-
+          dotnet run --file scripts/release-candidate.cs -- verify
+          --version "$RELEASE_VERSION"
+          --tag "$RELEASE_TAG"
+          --commit "${{ needs.build.outputs.commit }}"
+          --package-id "$PACKAGE_ID"
+          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --manifest artifacts/release/release-manifest.json
+          --checksums artifacts/release/SHA256SUMS
+
+      - name: Attest release artifacts
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.nupkg
+            artifacts/release/release-manifest.json
+            artifacts/release/SHA256SUMS
+
+      - name: Create or resume draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin
+
+          if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            existing_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [[ "${existing_commit}" != "${GITHUB_SHA}" ]]; then
+              echo "Tag ${RELEASE_TAG} already points to ${existing_commit}, not ${GITHUB_SHA}." >&2
+              exit 3
+            fi
+          fi
+
+          tag_exists=false
+          if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
+            tag_exists=true
+          fi
+
+          release_state="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [[ "${release_state}" == "false" ]]; then
+            echo "Release ${RELEASE_TAG} is already published; refusing to mutate an immutable release." >&2
+            exit 3
+          fi
+
+          if [[ "${release_state}" == "true" && "${tag_exists}" != "true" ]]; then
+            release_target="$(gh release view "${RELEASE_TAG}" --json targetCommitish --jq '.targetCommitish')"
+            if [[ "${release_target}" != "${GITHUB_SHA}" ]]; then
+              echo "Draft release ${RELEASE_TAG} targets ${release_target}, not validated SHA ${GITHUB_SHA}." >&2
+              exit 3
+            fi
+          fi
+
+          if [[ -z "${release_state}" ]]; then
+            if [[ "${tag_exists}" == "true" ]]; then
+              gh release create "${RELEASE_TAG}" \
+                --verify-tag \
+                --draft \
+                --generate-notes \
+                --title "${RELEASE_TAG}"
+            else
+              gh release create "${RELEASE_TAG}" \
+                --target "${GITHUB_SHA}" \
+                --draft \
+                --generate-notes \
+                --title "${RELEASE_TAG}"
+            fi
+          fi
+
+          gh release upload "${RELEASE_TAG}" \
+            "artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.nupkg" \
+            "artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.snupkg" \
+            artifacts/release/release-manifest.json \
+            artifacts/release/SHA256SUMS \
+            --clobber
+
+      - name: Authenticate to NuGet.org with Trusted Publishing
+        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish package to NuGet.org
+        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: >-
+          dotnet nuget push
+          "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key "$NUGET_API_KEY"
+          --skip-duplicate
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          IS_PRERELEASE: ${{ needs.build.outputs.is-prerelease }}
+        run: |
+          set -euo pipefail
+
+          gh release edit "${RELEASE_TAG}" \
+            --draft=false \
+            --prerelease="${IS_PRERELEASE}" >/dev/null
