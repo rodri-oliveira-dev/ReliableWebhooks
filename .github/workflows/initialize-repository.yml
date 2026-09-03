@@ -32,14 +32,14 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Validate initialization token
+      - name: Validate initialization push token
         env:
           INITIALIZE_REPOSITORY_TOKEN: ${{ secrets.INITIALIZE_REPOSITORY_TOKEN }}
         shell: bash
         run: |
           if [ -z "$INITIALIZE_REPOSITORY_TOKEN" ]; then
             echo "::error::Configure repository secret INITIALIZE_REPOSITORY_TOKEN before running this one-time initializer."
-            echo "::error::For a fine-grained token, grant this repository Contents: read/write, Pull requests: read/write, and Workflows: read/write. For a classic PAT, grant repo and workflow scopes."
+            echo "::error::For a fine-grained token, grant this repository Contents: write, Pull requests: write, and Workflows: write. For a classic PAT, grant repo and workflow scopes."
             exit 1
           fi
 
@@ -126,7 +126,7 @@ jobs:
 
           if ! git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
             push --force-with-lease origin "HEAD:refs/heads/$branch"; then
-            echo "::error::Could not push the initialization branch. Confirm INITIALIZE_REPOSITORY_TOKEN has write access to this repository and permission to update workflow files."
+            echo "::error::Could not push the initialization branch. Confirm INITIALIZE_REPOSITORY_TOKEN has write access to this repository and permission to update workflow files. The initializer uses a pull request so default-branch branch protection and rulesets remain enforced."
             exit 1
           fi
 
