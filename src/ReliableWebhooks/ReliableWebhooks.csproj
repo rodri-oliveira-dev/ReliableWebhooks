@@ -6,8 +6,8 @@
     <EnablePackageValidation>true</EnablePackageValidation>
 
     <!-- NuGet metadata -->
-    <PackageId>Template.Library</PackageId>
-    <Title>Template.Library</Title>
+    <PackageId>ReliableWebhooks</PackageId>
+    <Title>ReliableWebhooks</Title>
     <Authors>TODO: Set package authors.</Authors>
     <Description>
       TODO: Describe the library before publishing.
