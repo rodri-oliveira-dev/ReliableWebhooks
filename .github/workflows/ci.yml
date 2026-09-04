@@ -38,12 +38,12 @@ jobs:
         run: dotnet tool list --local
 
       - name: Restaurar dependências em locked mode
-        run: dotnet restore Template.Library.slnx --locked-mode
+        run: dotnet restore ReliableWebhooks.slnx --locked-mode
 
       - name: Verificar políticas compartilhadas de build
         shell: bash
         run: |
-          project="src/Template.Library/Template.Library.csproj"
+          project="src/ReliableWebhooks/ReliableWebhooks.csproj"
 
           get_property() {
             dotnet msbuild "$project" -nologo -getProperty:"$1" \
@@ -172,7 +172,7 @@ jobs:
       - name: Verificar Central Package Management
         shell: bash
         run: |
-          project="tests/Template.Library.Tests/Template.Library.Tests.csproj"
+          project="tests/ReliableWebhooks.Tests/ReliableWebhooks.Tests.csproj"
           enabled="$(dotnet msbuild "$project" -nologo -getProperty:ManagePackageVersionsCentrally | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -n 1)"
 
           if [ "$enabled" != "true" ]; then
@@ -191,19 +191,19 @@ jobs:
           fi
 
       - name: Listar dependências
-        run: dotnet list Template.Library.slnx package --include-transitive
+        run: dotnet list ReliableWebhooks.slnx package --include-transitive
 
       - name: Verificar formatação
-        run: dotnet format Template.Library.slnx --verify-no-changes --no-restore
+        run: dotnet format ReliableWebhooks.slnx --verify-no-changes --no-restore
 
       - name: Compilar
-        run: dotnet build Template.Library.slnx --configuration Release --no-restore
+        run: dotnet build ReliableWebhooks.slnx --configuration Release --no-restore
 
       - name: Executar testes com MTP
-        run: dotnet test Template.Library.slnx --configuration Release --no-build
+        run: dotnet test ReliableWebhooks.slnx --configuration Release --no-build
 
       - name: Coletar cobertura com Coverlet MTP
-        run: dotnet test Template.Library.slnx --configuration Release --no-build --coverlet --coverlet-output-format cobertura
+        run: dotnet test ReliableWebhooks.slnx --configuration Release --no-build --coverlet --coverlet-output-format cobertura
 
       - name: Preparar artefato de cobertura
         shell: bash
@@ -219,7 +219,7 @@ jobs:
           cp "$coverage_file" artifacts/coverage/coverage.cobertura.xml
 
       - name: Empacotar biblioteca
-        run: dotnet pack src/Template.Library/Template.Library.csproj --configuration Release --no-build --output artifacts/packages
+        run: dotnet pack src/ReliableWebhooks/ReliableWebhooks.csproj --configuration Release --no-build --output artifacts/packages
 
       - name: Validar pacote, símbolos e Source Link
         run: dotnet run --file scripts/verify-package.cs -- artifacts/packages --require-source-link
@@ -227,7 +227,7 @@ jobs:
       - name: Validar consumo do pacote local
         shell: bash
         run: |
-          project="src/Template.Library/Template.Library.csproj"
+          project="src/ReliableWebhooks/ReliableWebhooks.csproj"
           version="$(dotnet msbuild "$project" -nologo -getProperty:PackageVersion | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -n 1)"
           consumer="$(mktemp -d)"
 
@@ -239,15 +239,15 @@ jobs:
             exit 1
           fi
 
-          dotnet add "$consumer_project" package Template.Library \
+          dotnet add "$consumer_project" package ReliableWebhooks \
             --version "$version" \
             --source "$GITHUB_WORKSPACE/artifacts/packages"
 
           cat > "$consumer/Program.cs" <<'EOF'
-          using Template.Library;
+          using ReliableWebhooks;
 
           _ = new Class1();
-          Console.WriteLine("Template.Library package consumed successfully.");
+          Console.WriteLine("ReliableWebhooks package consumed successfully.");
           EOF
 
           dotnet build "$consumer_project" --configuration Release --no-restore

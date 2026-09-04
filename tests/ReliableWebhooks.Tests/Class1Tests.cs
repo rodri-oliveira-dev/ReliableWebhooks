@@ -1,9 +1,9 @@
 using AwesomeAssertions;
 using NSubstitute;
-using Template.Library;
+using ReliableWebhooks;
 using Xunit;
 
-namespace Template.Library.Tests;
+namespace ReliableWebhooks.Tests;
 
 public sealed class Class1Tests
 {

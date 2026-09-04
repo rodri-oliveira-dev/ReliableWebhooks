@@ -1,4 +1,4 @@
-namespace Template.Library;
+namespace ReliableWebhooks;
 
 /// <summary>
 /// Placeholder type used to validate library packaging and consumption.
