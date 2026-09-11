@@ -190,7 +190,7 @@ public sealed class WebhookHttpTransport
         HttpContent content,
         CancellationToken cancellationToken)
     {
-        await using Stream stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using Stream stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using MemoryStream captured = new(Math.Min(maxResponseBodyBytes, ReadBufferSize));
         byte[] buffer = new byte[ReadBufferSize];
         int remaining = maxResponseBodyBytes;
