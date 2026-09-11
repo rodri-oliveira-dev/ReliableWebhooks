@@ -246,7 +246,12 @@ jobs:
           cat > "$consumer/Program.cs" <<'EOF'
           using ReliableWebhooks;
 
-          _ = new Class1();
+          _ = new WebhookMessage(
+              "consumer-smoke-test",
+              "consumer.test",
+              new Uri("https://example.test/webhooks"),
+              Array.Empty<byte>(),
+              "application/json");
           Console.WriteLine("ReliableWebhooks package consumed successfully.");
           EOF
 
