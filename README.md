@@ -83,7 +83,7 @@ await store.EnqueueAsync(message, now);
 
 WebhookDeliveryLease lease = (await store.ClaimDueAsync(
     now,
-    leaseDuration: TimeSpan.FromSeconds(30),
+    leaseDuration: TimeSpan.FromMinutes(1),
     maxCount: 1)).Single();
 
 using var handler = new HttpClientHandler
@@ -96,6 +96,8 @@ var transport = new WebhookHttpTransport(httpClient);
 
 WebhookDeliveryResult result = await transport.SendAsync(lease.Delivery.Message);
 ```
+
+The one-minute lease intentionally exceeds the transport's default 30-second attempt timeout, leaving time to persist the result while ownership is still valid. Production workers should size leases beyond their complete attempt budget or renew active leases when processing can run longer.
 
 `InMemoryWebhookDeliveryStore` is process-local and **not durable**. It exists for tests and samples only and must not be used as production persistence.
 
