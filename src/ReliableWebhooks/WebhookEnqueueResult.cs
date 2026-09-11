@@ -30,12 +30,18 @@ public sealed class WebhookEnqueueResult
     /// <summary>
     /// Gets the enqueue status.
     /// </summary>
-    public WebhookEnqueueStatus Status { get; }
+    public WebhookEnqueueStatus Status
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the current persisted delivery snapshot.
     /// </summary>
-    public WebhookDeliverySnapshot Delivery { get; }
+    public WebhookDeliverySnapshot Delivery
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets a value indicating whether this operation created the delivery.
