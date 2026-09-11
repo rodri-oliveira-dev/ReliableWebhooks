@@ -1,157 +1,198 @@
 # ReliableWebhooks
 
-[English](README.md) | **Português (Brasil)**
+[English](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/README.md) | **Português (Brasil)**
 
-ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiável de webhooks de saída em aplicações e serviços.
+ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiável de webhooks de saída.
 
-O projeto está sendo desenvolvido para a **v0.1.0**. A base atual já inclui contratos imutáveis de webhook, um contrato de armazenamento com coordenação de workers por lease, um transporte HTTP que executa exatamente uma tentativa por chamada e uma política configurável de retry com backoff exponencial limitado, jitter, suporte a `Retry-After` e decisão de dead letter quando o limite de tentativas é atingido.
+Ela fornece componentes combináveis para identidade estável de webhooks, persistência e coordenação por lease, envio HTTP de uma única tentativa, classificação de respostas e agendamento determinístico de retries. O objetivo é tornar explícitas as preocupações de confiabilidade da entrega de webhooks, em vez de escondê-las dentro de um loop de background opaco.
 
-## Modelo de entrega
+> **Status:** a v0.1.0 está em desenvolvimento. O primeiro pacote público no NuGet ainda não foi lançado. A versão atual fornece os componentes de confiabilidade descritos abaixo; o store durável nativo e o dispatcher concorrente ainda fazem parte do trabalho necessário antes da primeira release pública.
 
-O roadmap da v0.1.0 tem como objetivo entrega **at-least-once**, e não exactly-once. Um store durável apoiado em banco de dados, dispatcher concorrente, assinatura, integração com injeção de dependência e observabilidade são adicionados como capacidades separadas para manter contratos explícitos e testáveis.
+## Por que ReliableWebhooks?
 
-Os receptores de webhook devem ser preparados para tolerar entregas duplicadas através de idempotência na aplicação.
+Enviar um `POST` HTTP é simples. Entregar um webhook de forma confiável não é.
 
-## Requisitos
+Aplicações reais precisam lidar com falhas HTTP transitórias, erros de rede, queda do processo, workers concorrentes, picos de retry, trabalho abandonado, entregas duplicadas e servidores que pedem ao cliente para tentar novamente mais tarde. Uma solução confiável também precisa preservar estado suficiente para continuar com segurança após uma falha, sem fingir que exatamente-uma-vez é possível sobre HTTP.
 
-- .NET SDK 10
-- Git
+ReliableWebhooks trata esses pontos separando o fluxo de entrega em responsabilidades explícitas:
 
-O repositório fixa a feature band esperada do SDK .NET 10 em `global.json` e usa restore NuGet em modo bloqueado para builds reproduzíveis.
+- uma identidade estável para cada mensagem de webhook;
+- um contrato de persistência para enqueue, claim, lease, retry e conclusão de entregas;
+- um transporte HTTP que executa exatamente uma tentativa de requisição por chamada;
+- resultados independentes do transporte para sucesso, falha retryable e falha permanente;
+- uma política de retry que calcula a próxima tentativa sem aguardar nem bloquear um worker;
+- abstrações substituíveis para persistência, classificação e comportamento de retry.
 
-## Build
+## Como funciona
+
+Uma entrega com ReliableWebhooks é estruturada como uma pequena máquina de estados, e não como uma chamada HTTP fire-and-forget:
+
+1. Crie um `WebhookMessage` com ID estável, tipo de evento, destino, bytes exatos do payload, content type e headers opcionais.
+2. Faça o enqueue através de `IWebhookDeliveryStore`. Tentativas duplicadas com o mesmo ID estável têm comportamento determinístico.
+3. Um worker faz o claim atômico das entregas vencidas e recebe um `WebhookDeliveryLease` com expiração.
+4. `WebhookHttpTransport` executa um único `POST` HTTP e retorna um `WebhookDeliveryResult`.
+5. Sucessos e falhas permanentes podem ser persistidos imediatamente. Falhas retryable são passadas para `IWebhookRetryPolicy`, que retorna um `NextAttemptAt` futuro ou uma decisão de dead letter.
+6. O store registra o estado resultante para que trabalhos abandonados ou com falha possam ser retomados com segurança.
+
+Quando combinado com um store durável e um dispatcher, o modelo de entrega pretendido é **at-least-once**, e não exactly-once. Portanto, os receptores precisam ser idempotentes e tolerar entregas duplicadas.
+
+## Instalação
+
+O Package ID planejado para o NuGet é `ReliableWebhooks` e a biblioteca tem como target `net10.0`.
+
+O primeiro pacote público ainda não foi publicado. Após a release v0.1.0, a instalação será:
 
 ```bash
-dotnet tool restore
-dotnet restore ReliableWebhooks.slnx --locked-mode
-dotnet build ReliableWebhooks.slnx --configuration Release --no-restore
+dotnet add package ReliableWebhooks --version 0.1.0
 ```
 
-## Testes
+ou:
 
-```bash
-dotnet test ReliableWebhooks.slnx --configuration Release --no-build
+```xml
+<PackageReference Include="ReliableWebhooks" Version="0.1.0" />
 ```
 
-Os testes usam xUnit v3 sobre Microsoft Testing Platform.
+## Começando
 
-## Pacote
-
-```bash
-dotnet pack src/ReliableWebhooks/ReliableWebhooks.csproj \
-  --configuration Release \
-  --no-build \
-  --output artifacts/packages
-```
-
-O pacote inclui documentação XML, símbolos PDB portáveis, Source Link, README do pacote e SDK Package Validation.
-
-O primeiro pacote público está planejado como `ReliableWebhooks` **v0.1.0**, após a conclusão dos principais componentes de confiabilidade do MVP.
-
-## Componentes públicos atuais
-
-### `WebhookMessage`
-
-Representa os dados imutáveis do webhook de saída: identificador estável, tipo de evento, destino, bytes exatos do payload, content type e headers customizados opcionais.
-
-### `IWebhookDeliveryStore`
-
-Define a fronteira de persistência para entrega confiável. O contrato cobre enqueue idempotente e determinístico, claim atômico de trabalhos vencidos, leases renováveis e expirados, agendamento de retry, contagem de tentativas, persistência do último erro e transições terminais para sucesso, falha permanente e dead letter.
-
-`InMemoryWebhookDeliveryStore` existe apenas para testes e exemplos. Ele é local ao processo e **não é durável**: todo o estado é perdido quando o processo encerra. Aplicações de produção que precisam de entrega confiável devem usar uma implementação durável de `IWebhookDeliveryStore`.
-
-### `WebhookHttpTransport`
-
-Executa uma tentativa HTTP `POST` e retorna um `WebhookDeliveryResult` estável. O transporte não executa retry, não aguarda entre tentativas e não agenda trabalho futuro.
-
-Redirects automáticos devem ser desabilitados no `HttpClient` fornecido para impedir que uma chamada do transporte resulte silenciosamente em múltiplas requisições HTTP ou em mudança do método. Configure o handler principal com `AllowAutoRedirect = false` ao usar `HttpClientHandler`, `SocketsHttpHandler` ou `IHttpClientFactory`.
-
-Valores malformados de `Retry-After` são ignorados. Valores válidos em delta-seconds e HTTP-date são expostos em `WebhookDeliveryResult` para o agendamento de retry.
-
-### Classificação de respostas
-
-O classificador padrão trata:
-
-- `2xx` como sucesso;
-- `408`, `425`, `429` e `5xx` como falhas retryable;
-- os demais status, incluindo redirects, como falhas permanentes.
-
-O consumidor pode substituir essa regra através de `IWebhookHttpResponseClassifier`.
-
-### Agendamento de retry
-
-`DefaultWebhookRetryPolicy` calcula os horários de retry de forma síncrona. Ela nunca chama `Task.Delay` e não bloqueia um worker; retorna apenas um `WebhookRetryDecision` com um `NextAttemptAt` futuro ou uma decisão de dead letter.
-
-Os valores padrão de `WebhookRetryPolicyOptions` são:
-
-- `MaxAttempts = 5` — inclui a tentativa atual;
-- `BaseDelay = 1 segundo`;
-- `MaxDelay = 5 minutos`;
-- `JitterFactor = 0.2` — adiciona de zero a 20% do atraso exponencial antes da aplicação do limite máximo.
-
-O atraso exponencial dobra a cada tentativa iniciada. Um `Retry-After` válido só posterga a próxima tentativa quando resultar em um horário posterior ao calculado localmente. O atraso final, incluindo `Retry-After`, nunca ultrapassa `MaxDelay`. Ao atingir `MaxAttempts`, a policy retorna `WebhookRetryAction.DeadLetter`.
+A API atual expõe diretamente os componentes de entrega. O exemplo abaixo usa o store em memória apenas para demonstrar o fluxo.
 
 ```csharp
-var policy = new DefaultWebhookRetryPolicy(
-    new WebhookRetryPolicyOptions
-    {
-        MaxAttempts = 5,
-        BaseDelay = TimeSpan.FromSeconds(2),
-        MaxDelay = TimeSpan.FromMinutes(10),
-        JitterFactor = 0.2,
-    });
+using System.Text.Json;
+using ReliableWebhooks;
 
-WebhookRetryContext context = WebhookRetryContext.FromResult(
-    deliverySnapshot,
-    deliveryResult,
-    DateTimeOffset.UtcNow);
+byte[] payload = JsonSerializer.SerializeToUtf8Bytes(new
+{
+    OrderId = 123,
+    Status = "created",
+});
 
-WebhookRetryDecision decision = policy.GetDecision(context);
+var message = new WebhookMessage(
+    id: Guid.NewGuid().ToString("N"),
+    eventType: "order.created",
+    destination: new Uri("https://example.com/webhooks"),
+    payload: payload,
+    contentType: "application/json");
+
+IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore();
+DateTimeOffset now = DateTimeOffset.UtcNow;
+
+await store.EnqueueAsync(message, now);
+
+WebhookDeliveryLease lease = (await store.ClaimDueAsync(
+    now,
+    leaseDuration: TimeSpan.FromSeconds(30),
+    maxCount: 1)).Single();
+
+using var handler = new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+};
+
+using var httpClient = new HttpClient(handler);
+var transport = new WebhookHttpTransport(httpClient);
+
+WebhookDeliveryResult result = await transport.SendAsync(lease.Delivery.Message);
 ```
 
-O consumidor pode substituir a estratégia por meio de `IWebhookRetryPolicy`. Testes ou estratégias customizadas que precisem de jitter determinístico podem fornecer um `IWebhookRetryJitterSource`.
+`InMemoryWebhookDeliveryStore` é local ao processo e **não é durável**. Ele existe apenas para testes e exemplos e não deve ser usado como persistência de produção.
 
-## Baseline de engenharia
+### Tratando o resultado
 
-O repositório mantém uma baseline voltada a biblioteca de produção com:
+O transporte propositalmente não executa retries. Ele representa uma única tentativa e deixa a transição de estado para o chamador ou para o dispatcher.
 
-- nullable reference types e warnings como erros;
-- analyzers .NET e analyzers de segurança;
-- NuGet Audit e package lock files;
-- verificação de formatação;
-- CI com build, testes, cobertura, pack, validação do pacote, símbolos e Source Link;
-- CodeQL e Dependency Review;
-- análise opcional no SonarQube Cloud;
-- validação de release e Trusted Publishing para NuGet.org via GitHub OIDC.
+```csharp
+DateTimeOffset completedAt = DateTimeOffset.UtcNow;
 
-Consulte [docs/sonarqube-cloud.pt-BR.md](docs/sonarqube-cloud.pt-BR.md) para configurar o SonarQube Cloud.
+switch (result.Outcome)
+{
+    case WebhookDeliveryOutcome.Success:
+        await store.MarkSucceededAsync(lease, completedAt);
+        break;
 
-## Processo de release
+    case WebhookDeliveryOutcome.PermanentFailure:
+        await store.MarkPermanentlyFailedAsync(
+            lease,
+            completedAt,
+            lastError: null);
+        break;
 
-`.github/workflows/release.yml` valida candidatos de release em pull requests e oferece publicação manual e explícita a partir da `main`.
+    case WebhookDeliveryOutcome.RetryableFailure:
+        var retryPolicy = new DefaultWebhookRetryPolicy();
+        WebhookRetryDecision decision = retryPolicy.GetDecision(
+            WebhookRetryContext.FromResult(
+                lease.Delivery,
+                result,
+                completedAt));
 
-Na publicação oficial, o workflow exige uma versão semântica exata, valida o pacote e os artefatos de release e pode publicar no NuGet.org por Trusted Publishing quando a Repository Variable `NUGET_USER` estiver configurada.
+        if (decision.ShouldRetry)
+        {
+            await store.ScheduleRetryAsync(
+                lease,
+                completedAt,
+                decision.NextAttemptAt!.Value,
+                lastError: null);
+        }
+        else
+        {
+            await store.DeadLetterAsync(
+                lease,
+                completedAt,
+                lastError: null);
+        }
 
-## Estrutura do projeto
-
-```text
-.
-├── .github/workflows/
-├── docs/
-├── scripts/
-├── src/ReliableWebhooks/
-├── tests/ReliableWebhooks.Tests/
-├── CHANGELOG.md
-├── Directory.Build.props
-├── Directory.Packages.props
-├── ReliableWebhooks.slnx
-└── global.json
+        break;
+}
 ```
 
-## Segurança
+## Comportamento padrão
 
-Use [SECURITY.md](SECURITY.md) para relatar vulnerabilidades de forma privada. Payloads, segredos de assinatura e outros dados sensíveis de entrega não devem ser expostos por logs ou diagnósticos por padrão.
+| Área | Padrão |
+| --- | --- |
+| Timeout de uma tentativa HTTP | 30 segundos |
+| Corpo da resposta capturado | Até 16 KiB |
+| Classificação de sucesso | Qualquer resposta `2xx` |
+| Respostas HTTP retryable | `408`, `425`, `429` e `5xx` |
+| Respostas HTTP permanentes | Demais status, incluindo redirects |
+| Máximo de tentativas | 5, incluindo a tentativa atual |
+| Atraso base de retry | 1 segundo |
+| Atraso máximo de retry | 5 minutos |
+| Jitter | De 0 a 20% de jitter positivo antes da aplicação do limite máximo |
+| `Retry-After` | Respeitado quando agenda para depois do retry local, limitado pelo atraso máximo configurado |
 
-## Contribuição
+Redirects automáticos devem ser desabilitados no handler do `HttpClient` para impedir que uma única chamada do transporte se transforme silenciosamente em múltiplas requisições HTTP ou altere o método da requisição.
 
-Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para o fluxo esperado de desenvolvimento e pull requests. Mudanças relevantes para consumidores devem ser registradas na seção `Unreleased` do [CHANGELOG.md](CHANGELOG.md).
+Valores malformados de `Retry-After` são ignorados. Valores válidos em delta-seconds e HTTP-date são expostos através de `WebhookDeliveryResult` e consumidos pela política de retry padrão.
+
+## Garantias e limites de entrega
+
+ReliableWebhooks foi projetado com semântica de entrega explícita:
+
+- **At-least-once, não exactly-once.** Uma entrega duplicada pode ocorrer, especialmente quando um worker cai após enviar a requisição e antes de persistir o resultado.
+- **IDs estáveis permitem enqueue seguro contra duplicatas.** O receptor ainda precisa implementar idempotência na aplicação.
+- **Leases coordenam a posse ativa.** Enquanto uma lease é válida, dois workers não devem possuir a mesma entrega simultaneamente; trabalhos expirados podem ser recuperados.
+- **Uma chamada do transporte significa uma tentativa HTTP.** Loops de retry ficam propositalmente fora do transporte.
+- **Políticas de retry agendam; elas não esperam.** `DefaultWebhookRetryPolicy` retorna um timestamp futuro ou uma decisão de dead letter e nunca chama `Task.Delay`.
+- **A persistência é substituível.** O pacote core não depende de um banco de dados específico.
+
+A versão atual em desenvolvimento ainda não inclui o store durável de produção com EF Core, dispatcher concorrente, assinatura HMAC, integração com injeção de dependência ou observabilidade planejados para a v0.1.0.
+
+## Extensibilidade
+
+Os principais comportamentos são expostos por abstrações públicas:
+
+- `IWebhookDeliveryStore` — persistência e coordenação de leases;
+- `IWebhookHttpResponseClassifier` — classificação de respostas HTTP;
+- `IWebhookRetryPolicy` — decisões de retry e dead letter;
+- `IWebhookRetryJitterSource` — geração determinística ou customizada de jitter.
+
+Isso mantém persistência, comportamento de transporte e estratégia de retry independentes, substituíveis e testáveis.
+
+## Suporte e contribuição
+
+Use [GitHub Issues](https://github.com/rodri-oliveira-dev/ReliableWebhooks/issues) para bugs, dúvidas e discussões de funcionalidades.
+
+Para questões de segurança, siga o [SECURITY.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/SECURITY.md) em vez de abrir uma issue pública.
+
+Contribuições são bem-vindas. Consulte [CONTRIBUTING.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/CONTRIBUTING.md) para o fluxo de contribuição e [CHANGELOG.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/CHANGELOG.md) para mudanças relevantes.
+
+ReliableWebhooks é licenciado sob a [Licença MIT](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/LICENSE).
