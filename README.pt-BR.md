@@ -83,7 +83,7 @@ await store.EnqueueAsync(message, now);
 
 WebhookDeliveryLease lease = (await store.ClaimDueAsync(
     now,
-    leaseDuration: TimeSpan.FromSeconds(30),
+    leaseDuration: TimeSpan.FromMinutes(1),
     maxCount: 1)).Single();
 
 using var handler = new HttpClientHandler
@@ -96,6 +96,8 @@ var transport = new WebhookHttpTransport(httpClient);
 
 WebhookDeliveryResult result = await transport.SendAsync(lease.Delivery.Message);
 ```
+
+A lease de um minuto é propositalmente maior que o timeout padrão de 30 segundos de uma tentativa HTTP, deixando tempo para persistir o resultado enquanto a posse ainda é válida. Em produção, a duração da lease deve superar o orçamento completo de uma tentativa, ou a lease deve ser renovada quando o processamento puder levar mais tempo.
 
 `InMemoryWebhookDeliveryStore` é local ao processo e **não é durável**. Ele existe apenas para testes e exemplos e não deve ser usado como persistência de produção.
 
