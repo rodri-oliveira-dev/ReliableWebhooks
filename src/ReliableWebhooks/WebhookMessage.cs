@@ -52,17 +52,26 @@ public sealed class WebhookMessage
     /// <summary>
     /// Gets the stable webhook identifier.
     /// </summary>
-    public string Id { get; }
+    public string Id
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the application-defined event type.
     /// </summary>
-    public string EventType { get; }
+    public string EventType
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the absolute HTTP or HTTPS destination URI.
     /// </summary>
-    public Uri Destination { get; }
+    public Uri Destination
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the exact payload bytes captured when this message was created.
@@ -72,12 +81,18 @@ public sealed class WebhookMessage
     /// <summary>
     /// Gets the payload content type.
     /// </summary>
-    public string ContentType { get; }
+    public string ContentType
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets a read-only snapshot of custom delivery headers.
     /// </summary>
-    public IReadOnlyDictionary<string, string> Headers { get; }
+    public IReadOnlyDictionary<string, string> Headers
+    {
+        get;
+    }
 
     private static bool IsHttpDestination(Uri destination)
     {
