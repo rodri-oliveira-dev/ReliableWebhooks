@@ -4,11 +4,11 @@
 
 ReliableWebhooks is a .NET 10 library for building reliable outbound webhook delivery in applications and services.
 
-The project is being developed toward **v0.1.0**. The current foundation includes immutable webhook contracts and an HTTP transport that performs exactly one delivery attempt per call, exposes explicit delivery outcomes, supports configurable attempt timeouts, captures bounded response bodies, and surfaces `Retry-After` metadata without implementing retries internally.
+The project is being developed toward **v0.1.0**. The current foundation includes immutable webhook contracts, a storage contract with lease-based worker coordination, and an HTTP transport that performs exactly one delivery attempt per call, exposes explicit delivery outcomes, supports configurable attempt timeouts, captures bounded response bodies, and surfaces `Retry-After` metadata without implementing retries internally.
 
 ## Delivery model
 
-The v0.1.0 roadmap targets **at-least-once delivery**, not exactly-once delivery. Durable storage, retry scheduling, concurrent dispatching, signing, dependency-injection integration, and observability are being added as separate capabilities so their contracts remain explicit and testable.
+The v0.1.0 roadmap targets **at-least-once delivery**, not exactly-once delivery. A durable database-backed store, retry policy, concurrent dispatcher, signing, dependency-injection integration, and observability are being added as separate capabilities so their contracts remain explicit and testable.
 
 Webhook receivers should ultimately be designed to tolerate duplicate deliveries through application-level idempotency.
 
@@ -53,6 +53,12 @@ The first public package is planned as `ReliableWebhooks` **v0.1.0** after the M
 ### `WebhookMessage`
 
 Represents the immutable outbound webhook data: stable identifier, event type, destination, exact payload bytes, content type, and optional custom headers.
+
+### `IWebhookDeliveryStore`
+
+Defines the persistence boundary for reliable delivery. The contract supports deterministic idempotent enqueue, atomic claims of due work, renewable expiring leases, retry scheduling, attempt counts, last-error persistence, and terminal success/permanent-failure/dead-letter transitions.
+
+`InMemoryWebhookDeliveryStore` is provided only for tests and samples. It is process-local and **non-durable**: all state is lost when the process exits. Production applications that require reliable delivery must use a durable implementation of `IWebhookDeliveryStore`.
 
 ### `WebhookHttpTransport`
 

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Core webhook contracts for immutable messages, delivery lifecycle states, delivery attempts, and delivery snapshots.
+- Store abstraction for idempotent enqueue, atomic due-delivery claims, renewable expiring leases, retry scheduling, terminal delivery transitions, and a non-durable in-memory implementation for tests and samples.
 - HTTP webhook transport for one-attempt `POST` delivery, extensible response classification, per-attempt timeout handling, bounded response-body capture, `Retry-After` metadata, and explicit network/timeout results without internal retry loops.
 - Primary GitHub Actions CI workflow with locked restore, formatting verification, Release build, tests, coverage, NuGet packaging, package validation, symbols, Source Link validation, and downloadable artifacts.
 - CodeQL security analysis for C#.
