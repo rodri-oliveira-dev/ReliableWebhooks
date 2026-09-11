@@ -103,7 +103,7 @@ public sealed class WebhookHttpTransport
                 throw new InvalidOperationException("The HTTP response classifier returned an undefined delivery outcome.");
             }
 
-            RetryConditionHeaderValue? retryAfter = response.Headers.RetryAfter;
+            (TimeSpan? Delay, DateTimeOffset? Date) retryAfter = ReadRetryAfter(response.Headers);
             (byte[] Body, bool Truncated) body = await CaptureResponseBodyAsync(
                 response.Content,
                 attemptToken,
@@ -114,8 +114,8 @@ public sealed class WebhookHttpTransport
                 statusCode,
                 body.Body,
                 body.Truncated,
-                retryAfter?.Delta,
-                retryAfter?.Date);
+                retryAfter.Delay,
+                retryAfter.Date);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -151,6 +151,25 @@ public sealed class WebhookHttpTransport
         }
 
         return request;
+    }
+
+    private static (TimeSpan? Delay, DateTimeOffset? Date) ReadRetryAfter(HttpResponseHeaders headers)
+    {
+        if (!headers.TryGetValues("Retry-After", out IEnumerable<string>? values))
+        {
+            return (null, null);
+        }
+
+        foreach (string value in values)
+        {
+            if (RetryConditionHeaderValue.TryParse(value, out RetryConditionHeaderValue? parsed)
+                && parsed is not null)
+            {
+                return (parsed.Delta, parsed.Date);
+            }
+        }
+
+        return (null, null);
     }
 
     private CancellationTokenSource? CreateTimeoutSource(CancellationToken cancellationToken)
