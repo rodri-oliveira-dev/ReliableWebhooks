@@ -57,6 +57,9 @@ ou:
 A API atual expõe diretamente os componentes de entrega. O exemplo abaixo usa o store em memória apenas para demonstrar o fluxo.
 
 ```csharp
+using System;
+using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using ReliableWebhooks;
 
