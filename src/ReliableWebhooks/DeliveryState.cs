@@ -21,12 +21,17 @@ public enum DeliveryState
     Succeeded = 2,
 
     /// <summary>
-    /// The latest delivery attempt failed and the delivery is not currently being processed.
+    /// The latest delivery attempt failed retryably and is waiting for another attempt.
     /// </summary>
     Failed = 3,
 
     /// <summary>
-    /// The webhook reached a terminal state and will not be retried automatically.
+    /// The webhook reached a terminal dead-letter state and will not be retried automatically.
     /// </summary>
     DeadLettered = 4,
+
+    /// <summary>
+    /// The webhook failed permanently and will not be retried automatically.
+    /// </summary>
+    PermanentlyFailed = 5,
 }

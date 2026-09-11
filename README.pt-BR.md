@@ -4,11 +4,11 @@
 
 ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiável de webhooks de saída em aplicações e serviços.
 
-O projeto está sendo desenvolvido para a **v0.1.0**. A base atual já inclui contratos imutáveis de webhook e um transporte HTTP que executa exatamente uma tentativa de entrega por chamada, expõe resultados explícitos, permite configurar timeout por tentativa, limita a captura do corpo da resposta e disponibiliza metadados de `Retry-After` sem implementar retries internamente.
+O projeto está sendo desenvolvido para a **v0.1.0**. A base atual já inclui contratos imutáveis de webhook, um contrato de armazenamento com coordenação de workers por lease e um transporte HTTP que executa exatamente uma tentativa de entrega por chamada, expõe resultados explícitos, permite configurar timeout por tentativa, limita a captura do corpo da resposta e disponibiliza metadados de `Retry-After` sem implementar retries internamente.
 
 ## Modelo de entrega
 
-O roadmap da v0.1.0 tem como objetivo entrega **at-least-once**, e não exactly-once. Persistência durável, política de retry, dispatcher concorrente, assinatura, integração com injeção de dependência e observabilidade são adicionados como capacidades separadas para manter contratos explícitos e testáveis.
+O roadmap da v0.1.0 tem como objetivo entrega **at-least-once**, e não exactly-once. Um store durável apoiado em banco de dados, política de retry, dispatcher concorrente, assinatura, integração com injeção de dependência e observabilidade são adicionados como capacidades separadas para manter contratos explícitos e testáveis.
 
 Os receptores de webhook devem ser preparados para tolerar entregas duplicadas através de idempotência na aplicação.
 
@@ -53,6 +53,12 @@ O primeiro pacote público está planejado como `ReliableWebhooks` **v0.1.0**, a
 ### `WebhookMessage`
 
 Representa os dados imutáveis do webhook de saída: identificador estável, tipo de evento, destino, bytes exatos do payload, content type e headers customizados opcionais.
+
+### `IWebhookDeliveryStore`
+
+Define a fronteira de persistência para entrega confiável. O contrato cobre enqueue idempotente e determinístico, claim atômico de trabalhos vencidos, leases renováveis e expirados, agendamento de retry, contagem de tentativas, persistência do último erro e transições terminais para sucesso, falha permanente e dead letter.
+
+`InMemoryWebhookDeliveryStore` existe apenas para testes e exemplos. Ele é local ao processo e **não é durável**: todo o estado é perdido quando o processo encerra. Aplicações de produção que precisam de entrega confiável devem usar uma implementação durável de `IWebhookDeliveryStore`.
 
 ### `WebhookHttpTransport`
 

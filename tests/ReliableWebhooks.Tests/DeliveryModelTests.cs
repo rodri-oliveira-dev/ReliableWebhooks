@@ -15,6 +15,7 @@ public sealed class DeliveryModelTests
             DeliveryState.Succeeded,
             DeliveryState.Failed,
             DeliveryState.DeadLettered,
+            DeliveryState.PermanentlyFailed,
         ];
 
         Assert.Equal(expected, Enum.GetValues<DeliveryState>());
