@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using ReliableWebhooks;
 using Xunit;
 
@@ -29,6 +30,18 @@ public sealed class WebhookMessageTests
 
         Assert.Equal(new byte[] { 1, 2, 3 }, message.Payload.ToArray());
         Assert.Equal("original", message.Headers["x-correlation-id"]);
+    }
+
+    [Fact]
+    public void PayloadDoesNotExposeTheInternalBackingArray()
+    {
+        WebhookMessage message = CreateMessage();
+        ReadOnlyMemory<byte> exposedPayload = message.Payload;
+
+        Assert.True(MemoryMarshal.TryGetArray(exposedPayload, out ArraySegment<byte> segment));
+        segment.Array![segment.Offset] = 9;
+
+        Assert.Equal(new byte[] { 1, 2, 3 }, message.Payload.ToArray());
     }
 
     [Theory]
