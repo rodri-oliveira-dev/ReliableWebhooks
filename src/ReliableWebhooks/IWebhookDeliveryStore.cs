@@ -60,7 +60,7 @@ public interface IWebhookDeliveryStore
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
         DateTimeOffset nextAttemptAt,
-        string? error,
+        string? lastError,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -69,7 +69,7 @@ public interface IWebhookDeliveryStore
     Task MarkPermanentlyFailedAsync(
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
-        string? error,
+        string? lastError,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -78,7 +78,7 @@ public interface IWebhookDeliveryStore
     Task DeadLetterAsync(
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
-        string? error,
+        string? lastError,
         CancellationToken cancellationToken = default);
 
     /// <summary>
