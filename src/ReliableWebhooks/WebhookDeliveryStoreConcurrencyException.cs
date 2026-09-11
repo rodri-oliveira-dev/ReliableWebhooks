@@ -14,5 +14,8 @@ public sealed class WebhookDeliveryStoreConcurrencyException : InvalidOperationE
     /// <summary>
     /// Gets the webhook identifier associated with the rejected update.
     /// </summary>
-    public string WebhookId { get; }
+    public string WebhookId
+    {
+        get;
+    }
 }
