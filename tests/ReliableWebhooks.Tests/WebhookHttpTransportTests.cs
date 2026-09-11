@@ -21,7 +21,9 @@ public sealed class WebhookHttpTransportTests
                 ["X-Webhook-Signature"] = "signature-value",
             });
 
-        WebhookDeliveryResult result = await transport.SendAsync(message);
+        WebhookDeliveryResult result = await transport.SendAsync(
+            message,
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
         Assert.Equal(1, handler.CallCount);
@@ -49,7 +51,9 @@ public sealed class WebhookHttpTransportTests
             (_, _) => Task.FromResult(CreateResponse(statusCode))));
         WebhookHttpTransport transport = new(client);
 
-        WebhookDeliveryResult result = await transport.SendAsync(CreateMessage());
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(expected, result.Outcome);
         Assert.Equal(statusCode, result.StatusCode);
@@ -63,7 +67,9 @@ public sealed class WebhookHttpTransportTests
             static (_, _) => Task.FromResult(CreateResponse(409))));
         WebhookHttpTransport transport = new(client, new ConflictRetryableClassifier());
 
-        WebhookDeliveryResult result = await transport.SendAsync(CreateMessage());
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(WebhookDeliveryOutcome.RetryableFailure, result.Outcome);
         Assert.Equal(409, result.StatusCode);
@@ -76,7 +82,9 @@ public sealed class WebhookHttpTransportTests
             static (_, _) => Task.FromException<HttpResponseMessage>(new HttpRequestException("offline"))));
         WebhookHttpTransport transport = new(client);
 
-        WebhookDeliveryResult result = await transport.SendAsync(CreateMessage());
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(WebhookDeliveryOutcome.RetryableFailure, result.Outcome);
         Assert.Null(result.StatusCode);
@@ -100,7 +108,9 @@ public sealed class WebhookHttpTransportTests
                 AttemptTimeout = TimeSpan.FromMilliseconds(25),
             });
 
-        WebhookDeliveryResult result = await transport.SendAsync(CreateMessage());
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(WebhookDeliveryOutcome.RetryableFailure, result.Outcome);
         Assert.Equal(WebhookTransportFailureKind.Timeout, result.FailureKind);
@@ -140,7 +150,9 @@ public sealed class WebhookHttpTransportTests
                 MaxResponseBodyBytes = 4,
             });
 
-        WebhookDeliveryResult result = await transport.SendAsync(CreateMessage());
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(new byte[] { 1, 2, 3, 4 }, result.ResponseBody.ToArray());
         Assert.True(result.ResponseBodyTruncated);
@@ -158,7 +170,9 @@ public sealed class WebhookHttpTransportTests
             }));
         WebhookHttpTransport transport = new(client);
 
-        WebhookDeliveryResult result = await transport.SendAsync(CreateMessage());
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(),
+            TestContext.Current.CancellationToken);
 
         Assert.Equal(WebhookDeliveryOutcome.RetryableFailure, result.Outcome);
         Assert.Equal(TimeSpan.FromSeconds(45), result.RetryAfterDelay);
