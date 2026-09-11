@@ -5,11 +5,26 @@ namespace ReliableWebhooks;
 /// </summary>
 public sealed class WebhookDeliveryLease
 {
-    internal WebhookDeliveryLease(
+    /// <summary>
+    /// Initializes a new delivery lease.
+    /// </summary>
+    /// <param name="delivery">The persisted delivery snapshot captured for the lease.</param>
+    /// <param name="token">The opaque token that proves ownership of the lease.</param>
+    /// <param name="expiresAt">The time at which the lease expires if it is not renewed.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="delivery"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="token"/> is empty.</exception>
+    public WebhookDeliveryLease(
         WebhookDeliverySnapshot delivery,
         Guid token,
         DateTimeOffset expiresAt)
     {
+        ArgumentNullException.ThrowIfNull(delivery);
+
+        if (token == Guid.Empty)
+        {
+            throw new ArgumentException("Lease token cannot be empty.", nameof(token));
+        }
+
         Delivery = delivery;
         Token = token;
         ExpiresAt = expiresAt;
