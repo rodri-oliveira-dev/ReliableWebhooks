@@ -121,8 +121,8 @@ public sealed class InMemoryWebhookDeliveryStoreTests
             "timeout",
             cancellationToken);
 
-        WebhookDeliverySnapshot snapshot = Assert.NotNull(
-            await store.GetAsync("webhook-1", cancellationToken));
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync("webhook-1", cancellationToken);
+        Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.Failed, snapshot.State);
         Assert.Equal(1, snapshot.AttemptCount);
         Assert.Equal(nextAttemptAt, snapshot.NextAttemptAt);
@@ -147,8 +147,8 @@ public sealed class InMemoryWebhookDeliveryStoreTests
 
         await store.MarkSucceededAsync(lease, Now.AddSeconds(10), cancellationToken);
 
-        WebhookDeliverySnapshot snapshot = Assert.NotNull(
-            await store.GetAsync("webhook-1", cancellationToken));
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync("webhook-1", cancellationToken);
+        Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.Succeeded, snapshot.State);
         Assert.True(snapshot.IsTerminal);
         Assert.Null(snapshot.NextAttemptAt);
@@ -175,8 +175,8 @@ public sealed class InMemoryWebhookDeliveryStoreTests
             "HTTP 400",
             cancellationToken);
 
-        WebhookDeliverySnapshot snapshot = Assert.NotNull(
-            await store.GetAsync("webhook-1", cancellationToken));
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync("webhook-1", cancellationToken);
+        Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.PermanentlyFailed, snapshot.State);
         Assert.Equal("HTTP 400", snapshot.LastError);
         Assert.True(snapshot.IsTerminal);
@@ -199,8 +199,8 @@ public sealed class InMemoryWebhookDeliveryStoreTests
             "attempt limit reached",
             cancellationToken);
 
-        WebhookDeliverySnapshot snapshot = Assert.NotNull(
-            await store.GetAsync("webhook-1", cancellationToken));
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync("webhook-1", cancellationToken);
+        Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.DeadLettered, snapshot.State);
         Assert.Equal("attempt limit reached", snapshot.LastError);
         Assert.True(snapshot.IsTerminal);
