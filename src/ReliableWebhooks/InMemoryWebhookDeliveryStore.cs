@@ -320,18 +320,45 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
             NextAttemptAt = nextAttemptAt;
         }
 
-        internal WebhookMessage Message { get; }
+        internal WebhookMessage Message
+        {
+            get;
+        }
 
-        internal DeliveryState State { get; set; }
+        internal DeliveryState State
+        {
+            get;
+            set;
+        }
 
-        internal int AttemptCount { get; set; }
+        internal int AttemptCount
+        {
+            get;
+            set;
+        }
 
-        internal DateTimeOffset? NextAttemptAt { get; set; }
+        internal DateTimeOffset? NextAttemptAt
+        {
+            get;
+            set;
+        }
 
-        internal string? LastError { get; set; }
+        internal string? LastError
+        {
+            get;
+            set;
+        }
 
-        internal Guid? LeaseToken { get; set; }
+        internal Guid? LeaseToken
+        {
+            get;
+            set;
+        }
 
-        internal DateTimeOffset? LeaseExpiresAt { get; set; }
+        internal DateTimeOffset? LeaseExpiresAt
+        {
+            get;
+            set;
+        }
     }
 }
