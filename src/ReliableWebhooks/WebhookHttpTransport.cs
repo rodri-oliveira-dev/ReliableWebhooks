@@ -7,8 +7,12 @@ namespace ReliableWebhooks;
 /// </summary>
 /// <remarks>
 /// This type does not schedule retries, sleep between attempts, or own the supplied <see cref="HttpClient"/>.
-/// It can therefore be used directly with clients created by <c>IHttpClientFactory</c> without taking a
-/// dependency on the dependency-injection packages that provide that factory.
+/// Automatic redirects must be disabled on the supplied client so that each call represents exactly one POST
+/// to the configured webhook destination and so that 3xx responses reach the response classifier directly.
+/// When using <see cref="HttpClientHandler"/> or <see cref="SocketsHttpHandler"/>, set
+/// <c>AllowAutoRedirect = false</c>. When using <c>IHttpClientFactory</c>, configure its primary handler with
+/// automatic redirects disabled. This keeps the transport compatible with factory-created clients without
+/// taking a dependency on the dependency-injection packages that provide that factory.
 /// </remarks>
 public sealed class WebhookHttpTransport
 {
@@ -22,7 +26,9 @@ public sealed class WebhookHttpTransport
     /// <summary>
     /// Initializes a new instance of the <see cref="WebhookHttpTransport"/> class.
     /// </summary>
-    /// <param name="httpClient">The HTTP client used to send webhook requests.</param>
+    /// <param name="httpClient">
+    /// The HTTP client used to send webhook requests. Its primary handler must have automatic redirects disabled.
+    /// </param>
     /// <param name="classifier">An optional classifier that overrides the default HTTP status classification.</param>
     /// <param name="options">Optional transport settings.</param>
     /// <exception cref="ArgumentNullException"><paramref name="httpClient"/> is <see langword="null"/>.</exception>
