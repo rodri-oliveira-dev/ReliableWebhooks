@@ -20,11 +20,12 @@ on:
       - global.json
       - packages.lock.json
       - README.md
+      - README.pt-BR.md
       - CHANGELOG.md
   workflow_dispatch:
     inputs:
       version:
-        description: Exact Semantic Version to validate or publish (for example 1.2.0 or 1.3.0-beta.1).
+        description: Exact Semantic Version to validate or publish (for example 0.1.0 or 0.2.0-beta.1).
         required: true
         type: string
       publish:
@@ -57,7 +58,6 @@ jobs:
       is-prerelease: "${{ steps.release-metadata.outputs.is_prerelease }}"
       commit: "${{ steps.release-commit.outputs.commit }}"
       package-id: "${{ steps.package.outputs.package_id }}"
-      safe-to-publish: "${{ steps.package.outputs.safe_to_publish }}"
       nuget-publishing-enabled: "${{ steps.nuget-publishing.outputs.nuget_publishing_enabled }}"
       nuget-publishing-reason: "${{ steps.nuget-publishing.outputs.nuget_publishing_reason }}"
 
@@ -114,7 +114,7 @@ jobs:
       - name: Verify formatting
         run: dotnet format ReliableWebhooks.slnx --verify-no-changes --no-restore
 
-      - name: Validate package identity for publication
+      - name: Resolve package identity
         id: package
         shell: bash
         run: |
@@ -131,24 +131,13 @@ jobs:
             exit 1
           fi
 
-          placeholder_package_id="Template"".""Library"
-          safe_to_publish=true
-
-          if [[ "$package_id" == "$placeholder_package_id" ]]; then
-            safe_to_publish=false
-            echo 'Placeholder package identity detected; NuGet publication is blocked.'
-          fi
-
           echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
-          echo "safe_to_publish=$safe_to_publish" >> "$GITHUB_OUTPUT"
 
       - name: Resolve NuGet publishing opt-in
         id: nuget-publishing
         shell: bash
         env:
           SHOULD_PUBLISH: ${{ steps.release-metadata.outputs.should_publish }}
-          SAFE_TO_PUBLISH: ${{ steps.package.outputs.safe_to_publish }}
-          TEMPLATE_PACKAGE_AVAILABLE: false
           NUGET_USER: ${{ vars.NUGET_USER }}
         run: bash scripts/resolve-nuget-publishing.sh
 
@@ -248,7 +237,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
           VALIDATED_SHA: ${{ needs.build.outputs.commit }}
-          SAFE_TO_PUBLISH: ${{ needs.build.outputs.safe-to-publish }}
           NUGET_PUBLISHING_ENABLED: ${{ needs.build.outputs.nuget-publishing-enabled }}
         run: |
           set -euo pipefail
@@ -261,11 +249,6 @@ jobs:
           expected_tag="v${RELEASE_VERSION}"
           if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
             echo "Resolved release tag must be exactly '${expected_tag}'." >&2
-            exit 2
-          fi
-
-          if [[ "$SAFE_TO_PUBLISH" != "true" ]]; then
-            echo "Placeholder package identities cannot be published." >&2
             exit 2
           fi
 
