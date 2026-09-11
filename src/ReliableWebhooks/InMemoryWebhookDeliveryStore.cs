@@ -133,7 +133,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
         DateTimeOffset nextAttemptAt,
-        string? error,
+        string? lastError,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(lease);
@@ -153,7 +153,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
             Entry entry = GetActiveEntry(lease, completedAt);
             entry.State = DeliveryState.Failed;
             entry.NextAttemptAt = nextAttemptAt;
-            entry.LastError = error;
+            entry.LastError = lastError;
             ClearLease(entry);
         }
 
@@ -164,7 +164,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
     public Task MarkPermanentlyFailedAsync(
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
-        string? error,
+        string? lastError,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(lease);
@@ -174,7 +174,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
         {
             Entry entry = GetActiveEntry(lease, completedAt);
             entry.State = DeliveryState.PermanentlyFailed;
-            entry.LastError = error;
+            entry.LastError = lastError;
             ClearSchedulingAndLease(entry);
         }
 
@@ -185,7 +185,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
     public Task DeadLetterAsync(
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
-        string? error,
+        string? lastError,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(lease);
@@ -195,7 +195,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
         {
             Entry entry = GetActiveEntry(lease, completedAt);
             entry.State = DeliveryState.DeadLettered;
-            entry.LastError = error;
+            entry.LastError = lastError;
             ClearSchedulingAndLease(entry);
         }
 
