@@ -8,11 +8,11 @@
     <!-- NuGet metadata -->
     <PackageId>ReliableWebhooks</PackageId>
     <Title>ReliableWebhooks</Title>
-    <Authors>TODO: Set package authors.</Authors>
+    <Authors>Rodrigo de Oliveira</Authors>
     <Description>
-      TODO: Describe the library before publishing.
+      Reliable outbound webhook delivery primitives for .NET 10 with explicit delivery outcomes and extensible transport behavior.
     </Description>
-    <PackageTags>dotnet;csharp;library;net10;nuget</PackageTags>
+    <PackageTags>dotnet;csharp;webhooks;http;reliability</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <!-- NuGet presentation -->
