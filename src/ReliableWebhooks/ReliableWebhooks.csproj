@@ -12,7 +12,7 @@
     <Description>
       Reliable outbound webhook delivery primitives for .NET 10 with explicit delivery outcomes and extensible transport behavior.
     </Description>
-    <PackageTags>dotnet;csharp;library;webhooks;http;reliability</PackageTags>
+    <PackageTags>dotnet;csharp;library;net10;nuget;webhooks;http;reliability</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
 
     <!-- NuGet presentation -->
