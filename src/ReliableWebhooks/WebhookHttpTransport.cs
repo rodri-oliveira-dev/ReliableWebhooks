@@ -121,7 +121,7 @@ public sealed class WebhookHttpTransport
         }
     }
 
-    private HttpRequestMessage CreateRequest(WebhookMessage message)
+    private static HttpRequestMessage CreateRequest(WebhookMessage message)
     {
         HttpRequestMessage request = new(HttpMethod.Post, message.Destination);
         ByteArrayContent content = new(message.Payload.ToArray());
