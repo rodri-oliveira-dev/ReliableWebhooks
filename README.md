@@ -57,6 +57,9 @@ or:
 The current API exposes the delivery primitives directly. The example below uses the in-memory store only to demonstrate the workflow.
 
 ```csharp
+using System;
+using System.Linq;
+using System.Net.Http;
 using System.Text.Json;
 using ReliableWebhooks;
 
