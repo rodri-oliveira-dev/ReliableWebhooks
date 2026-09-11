@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+
 namespace ReliableWebhooks;
 
 /// <summary>
@@ -15,7 +17,7 @@ public sealed class DefaultWebhookRetryPolicy : IWebhookRetryPolicy
     /// Initializes a new default retry policy.
     /// </summary>
     /// <param name="options">Optional retry configuration.</param>
-    /// <param name="jitterSource">Optional normalized jitter source. Random shared values are used by default.</param>
+    /// <param name="jitterSource">Optional normalized jitter source. Secure random values are used by default.</param>
     /// <exception cref="ArgumentOutOfRangeException">A retry option is outside its supported range.</exception>
     public DefaultWebhookRetryPolicy(
         WebhookRetryPolicyOptions? options = null,
@@ -69,7 +71,7 @@ public sealed class DefaultWebhookRetryPolicy : IWebhookRetryPolicy
         baseDelay = options.BaseDelay;
         maxDelay = options.MaxDelay;
         jitterFactor = options.JitterFactor;
-        this.jitterSource = jitterSource ?? SharedRandomJitterSource.Instance;
+        this.jitterSource = jitterSource ?? CryptographicJitterSource.Instance;
     }
 
     /// <inheritdoc />
@@ -161,17 +163,17 @@ public sealed class DefaultWebhookRetryPolicy : IWebhookRetryPolicy
         }
     }
 
-    private sealed class SharedRandomJitterSource : IWebhookRetryJitterSource
+    private sealed class CryptographicJitterSource : IWebhookRetryJitterSource
     {
-        internal static readonly SharedRandomJitterSource Instance = new();
+        internal static readonly CryptographicJitterSource Instance = new();
 
-        private SharedRandomJitterSource()
+        private CryptographicJitterSource()
         {
         }
 
         public double NextValue()
         {
-            return Random.Shared.NextDouble();
+            return RandomNumberGenerator.GetInt32(0, 1_000_001) / 1_000_000d;
         }
     }
 }
