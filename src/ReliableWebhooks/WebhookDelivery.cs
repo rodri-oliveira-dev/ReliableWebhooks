@@ -35,15 +35,24 @@ public sealed class WebhookDelivery
     /// <summary>
     /// Gets the webhook message.
     /// </summary>
-    public WebhookMessage Message { get; }
+    public WebhookMessage Message
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the current delivery state.
     /// </summary>
-    public DeliveryState State { get; }
+    public DeliveryState State
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets an immutable snapshot of recorded delivery attempts.
     /// </summary>
-    public IReadOnlyList<DeliveryAttempt> Attempts { get; }
+    public IReadOnlyList<DeliveryAttempt> Attempts
+    {
+        get;
+    }
 }
