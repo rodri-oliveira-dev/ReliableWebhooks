@@ -43,20 +43,32 @@ public sealed class DeliveryAttempt
     /// <summary>
     /// Gets the one-based attempt number.
     /// </summary>
-    public int Number { get; }
+    public int Number
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the time at which the attempt started.
     /// </summary>
-    public DateTimeOffset StartedAt { get; }
+    public DateTimeOffset StartedAt
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the time at which the attempt completed, when available.
     /// </summary>
-    public DateTimeOffset? CompletedAt { get; }
+    public DateTimeOffset? CompletedAt
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the transport-neutral error description, when available.
     /// </summary>
-    public string? Error { get; }
+    public string? Error
+    {
+        get;
+    }
 }
