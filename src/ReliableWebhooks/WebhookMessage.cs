@@ -74,9 +74,9 @@ public sealed class WebhookMessage
     }
 
     /// <summary>
-    /// Gets the exact payload bytes captured when this message was created.
+    /// Gets a defensive copy of the exact payload bytes captured when this message was created.
     /// </summary>
-    public ReadOnlyMemory<byte> Payload => payload;
+    public ReadOnlyMemory<byte> Payload => payload.ToArray();
 
     /// <summary>
     /// Gets the payload content type.
