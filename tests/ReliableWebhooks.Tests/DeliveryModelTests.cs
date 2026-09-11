@@ -66,6 +66,52 @@ public sealed class DeliveryModelTests
             () => new WebhookDelivery(CreateMessage(), (DeliveryState)999));
     }
 
+    [Fact]
+    public void StoreResultModelsCanBeConstructedByConsumers()
+    {
+        WebhookMessage message = CreateMessage();
+        DateTimeOffset expiresAt = new(2026, 9, 11, 12, 5, 0, TimeSpan.Zero);
+        Guid token = Guid.NewGuid();
+
+        WebhookDeliverySnapshot snapshot = new(
+            message,
+            DeliveryState.InProgress,
+            2,
+            nextAttemptAt: null,
+            lastError: "timeout",
+            leaseExpiresAt: expiresAt);
+        WebhookDeliveryLease lease = new(snapshot, token, expiresAt);
+        WebhookEnqueueResult enqueueResult = new(WebhookEnqueueStatus.AlreadyExists, snapshot);
+
+        Assert.Same(message, snapshot.Message);
+        Assert.Equal(2, snapshot.AttemptCount);
+        Assert.Same(snapshot, lease.Delivery);
+        Assert.Equal(token, lease.Token);
+        Assert.Equal(expiresAt, lease.ExpiresAt);
+        Assert.Same(snapshot, enqueueResult.Delivery);
+        Assert.Equal(WebhookEnqueueStatus.AlreadyExists, enqueueResult.Status);
+    }
+
+    [Fact]
+    public void StoreResultModelsRejectInvalidPublicConstructionArguments()
+    {
+        WebhookMessage message = CreateMessage();
+        WebhookDeliverySnapshot snapshot = new(
+            message,
+            DeliveryState.Pending,
+            0,
+            nextAttemptAt: null,
+            lastError: null,
+            leaseExpiresAt: null);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new WebhookDeliverySnapshot(message, DeliveryState.Pending, -1, null, null, null));
+        Assert.Throws<ArgumentException>(
+            () => new WebhookDeliveryLease(snapshot, Guid.Empty, DateTimeOffset.UtcNow));
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new WebhookEnqueueResult((WebhookEnqueueStatus)999, snapshot));
+    }
+
     private static WebhookMessage CreateMessage()
     {
         return new WebhookMessage(
