@@ -24,32 +24,50 @@ public sealed class WebhookDeliverySnapshot
     /// <summary>
     /// Gets the webhook message associated with the delivery.
     /// </summary>
-    public WebhookMessage Message { get; }
+    public WebhookMessage Message
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the current delivery state.
     /// </summary>
-    public DeliveryState State { get; }
+    public DeliveryState State
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the number of claims that have started processing this delivery.
     /// </summary>
-    public int AttemptCount { get; }
+    public int AttemptCount
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the earliest time at which the next attempt may be claimed, when applicable.
     /// </summary>
-    public DateTimeOffset? NextAttemptAt { get; }
+    public DateTimeOffset? NextAttemptAt
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the last recorded transport-neutral error, when available.
     /// </summary>
-    public string? LastError { get; }
+    public string? LastError
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets the current lease expiration time when the delivery is in progress.
     /// </summary>
-    public DateTimeOffset? LeaseExpiresAt { get; }
+    public DateTimeOffset? LeaseExpiresAt
+    {
+        get;
+    }
 
     /// <summary>
     /// Gets a value indicating whether no further automatic processing should occur.
