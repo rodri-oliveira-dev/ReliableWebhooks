@@ -4,11 +4,11 @@
 
 ReliableWebhooks is a .NET 10 library for building reliable outbound webhook delivery in applications and services.
 
-The project is being developed toward **v0.1.0**. The current foundation includes immutable webhook contracts, a storage contract with lease-based worker coordination, and an HTTP transport that performs exactly one delivery attempt per call, exposes explicit delivery outcomes, supports configurable attempt timeouts, captures bounded response bodies, and surfaces `Retry-After` metadata without implementing retries internally.
+The project is being developed toward **v0.1.0**. The current foundation includes immutable webhook contracts, a storage contract with lease-based worker coordination, an HTTP transport that performs exactly one delivery attempt per call, and a configurable retry policy with capped exponential backoff, bounded jitter, `Retry-After` support, and maximum-attempt dead-letter decisions.
 
 ## Delivery model
 
-The v0.1.0 roadmap targets **at-least-once delivery**, not exactly-once delivery. A durable database-backed store, retry policy, concurrent dispatcher, signing, dependency-injection integration, and observability are being added as separate capabilities so their contracts remain explicit and testable.
+The v0.1.0 roadmap targets **at-least-once delivery**, not exactly-once delivery. A durable database-backed store, concurrent dispatcher, signing, dependency-injection integration, and observability are being added as separate capabilities so their contracts remain explicit and testable.
 
 Webhook receivers should ultimately be designed to tolerate duplicate deliveries through application-level idempotency.
 
@@ -66,6 +66,8 @@ Performs one HTTP `POST` attempt and returns a stable `WebhookDeliveryResult`. T
 
 Automatic redirects must be disabled on the supplied `HttpClient` so one transport call cannot silently become multiple HTTP requests or change the request method. Configure the primary handler with `AllowAutoRedirect = false` when using `HttpClientHandler`, `SocketsHttpHandler`, or `IHttpClientFactory`.
 
+Malformed `Retry-After` values are ignored. Valid delta-seconds and HTTP-date values are exposed through `WebhookDeliveryResult` for retry scheduling.
+
 ### Response classification
 
 The default classifier treats:
@@ -75,6 +77,39 @@ The default classifier treats:
 - other status codes, including redirects, as permanent failures.
 
 Consumers can replace the classifier through `IWebhookHttpResponseClassifier`.
+
+### Retry scheduling
+
+`DefaultWebhookRetryPolicy` calculates retry schedules synchronously. It never calls `Task.Delay` and never blocks a worker; it only returns a `WebhookRetryDecision` containing either a future `NextAttemptAt` or a dead-letter decision.
+
+Default `WebhookRetryPolicyOptions` values are:
+
+- `MaxAttempts = 5` — includes the current attempt;
+- `BaseDelay = 1 second`;
+- `MaxDelay = 5 minutes`;
+- `JitterFactor = 0.2` — adds between zero and 20% of the exponential delay before the maximum-delay cap is applied.
+
+The exponential delay doubles per started attempt. Valid `Retry-After` metadata is honored only when it would schedule the retry later than the locally calculated delay. The final delay, including `Retry-After`, never exceeds `MaxDelay`. Once `MaxAttempts` is reached, the policy returns `WebhookRetryAction.DeadLetter`.
+
+```csharp
+var policy = new DefaultWebhookRetryPolicy(
+    new WebhookRetryPolicyOptions
+    {
+        MaxAttempts = 5,
+        BaseDelay = TimeSpan.FromSeconds(2),
+        MaxDelay = TimeSpan.FromMinutes(10),
+        JitterFactor = 0.2,
+    });
+
+WebhookRetryContext context = WebhookRetryContext.FromResult(
+    deliverySnapshot,
+    deliveryResult,
+    DateTimeOffset.UtcNow);
+
+WebhookRetryDecision decision = policy.GetDecision(context);
+```
+
+Consumers can replace the retry strategy through `IWebhookRetryPolicy`. Tests or custom strategies that require deterministic jitter can supply an `IWebhookRetryJitterSource`.
 
 ## Engineering baseline
 

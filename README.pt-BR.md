@@ -4,11 +4,11 @@
 
 ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiável de webhooks de saída em aplicações e serviços.
 
-O projeto está sendo desenvolvido para a **v0.1.0**. A base atual já inclui contratos imutáveis de webhook, um contrato de armazenamento com coordenação de workers por lease e um transporte HTTP que executa exatamente uma tentativa de entrega por chamada, expõe resultados explícitos, permite configurar timeout por tentativa, limita a captura do corpo da resposta e disponibiliza metadados de `Retry-After` sem implementar retries internamente.
+O projeto está sendo desenvolvido para a **v0.1.0**. A base atual já inclui contratos imutáveis de webhook, um contrato de armazenamento com coordenação de workers por lease, um transporte HTTP que executa exatamente uma tentativa por chamada e uma política configurável de retry com backoff exponencial limitado, jitter, suporte a `Retry-After` e decisão de dead letter quando o limite de tentativas é atingido.
 
 ## Modelo de entrega
 
-O roadmap da v0.1.0 tem como objetivo entrega **at-least-once**, e não exactly-once. Um store durável apoiado em banco de dados, política de retry, dispatcher concorrente, assinatura, integração com injeção de dependência e observabilidade são adicionados como capacidades separadas para manter contratos explícitos e testáveis.
+O roadmap da v0.1.0 tem como objetivo entrega **at-least-once**, e não exactly-once. Um store durável apoiado em banco de dados, dispatcher concorrente, assinatura, integração com injeção de dependência e observabilidade são adicionados como capacidades separadas para manter contratos explícitos e testáveis.
 
 Os receptores de webhook devem ser preparados para tolerar entregas duplicadas através de idempotência na aplicação.
 
@@ -66,6 +66,8 @@ Executa uma tentativa HTTP `POST` e retorna um `WebhookDeliveryResult` estável.
 
 Redirects automáticos devem ser desabilitados no `HttpClient` fornecido para impedir que uma chamada do transporte resulte silenciosamente em múltiplas requisições HTTP ou em mudança do método. Configure o handler principal com `AllowAutoRedirect = false` ao usar `HttpClientHandler`, `SocketsHttpHandler` ou `IHttpClientFactory`.
 
+Valores malformados de `Retry-After` são ignorados. Valores válidos em delta-seconds e HTTP-date são expostos em `WebhookDeliveryResult` para o agendamento de retry.
+
 ### Classificação de respostas
 
 O classificador padrão trata:
@@ -75,6 +77,39 @@ O classificador padrão trata:
 - os demais status, incluindo redirects, como falhas permanentes.
 
 O consumidor pode substituir essa regra através de `IWebhookHttpResponseClassifier`.
+
+### Agendamento de retry
+
+`DefaultWebhookRetryPolicy` calcula os horários de retry de forma síncrona. Ela nunca chama `Task.Delay` e não bloqueia um worker; retorna apenas um `WebhookRetryDecision` com um `NextAttemptAt` futuro ou uma decisão de dead letter.
+
+Os valores padrão de `WebhookRetryPolicyOptions` são:
+
+- `MaxAttempts = 5` — inclui a tentativa atual;
+- `BaseDelay = 1 segundo`;
+- `MaxDelay = 5 minutos`;
+- `JitterFactor = 0.2` — adiciona de zero a 20% do atraso exponencial antes da aplicação do limite máximo.
+
+O atraso exponencial dobra a cada tentativa iniciada. Um `Retry-After` válido só posterga a próxima tentativa quando resultar em um horário posterior ao calculado localmente. O atraso final, incluindo `Retry-After`, nunca ultrapassa `MaxDelay`. Ao atingir `MaxAttempts`, a policy retorna `WebhookRetryAction.DeadLetter`.
+
+```csharp
+var policy = new DefaultWebhookRetryPolicy(
+    new WebhookRetryPolicyOptions
+    {
+        MaxAttempts = 5,
+        BaseDelay = TimeSpan.FromSeconds(2),
+        MaxDelay = TimeSpan.FromMinutes(10),
+        JitterFactor = 0.2,
+    });
+
+WebhookRetryContext context = WebhookRetryContext.FromResult(
+    deliverySnapshot,
+    deliveryResult,
+    DateTimeOffset.UtcNow);
+
+WebhookRetryDecision decision = policy.GetDecision(context);
+```
+
+O consumidor pode substituir a estratégia por meio de `IWebhookRetryPolicy`. Testes ou estratégias customizadas que precisem de jitter determinístico podem fornecer um `IWebhookRetryJitterSource`.
 
 ## Baseline de engenharia
 

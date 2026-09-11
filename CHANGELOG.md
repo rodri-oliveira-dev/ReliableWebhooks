@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Core webhook contracts for immutable messages, delivery lifecycle states, delivery attempts, and delivery snapshots.
 - Store abstraction for idempotent enqueue, atomic due-delivery claims, renewable expiring leases, retry scheduling, terminal delivery transitions, and a non-durable in-memory implementation for tests and samples.
 - HTTP webhook transport for one-attempt `POST` delivery, extensible response classification, per-attempt timeout handling, bounded response-body capture, `Retry-After` metadata, and explicit network/timeout results without internal retry loops.
+- Configurable retry policy with capped exponential backoff, deterministic bounded jitter, `Retry-After` delta/date support, maximum-attempt dead-letter decisions, and replaceable retry/jitter abstractions.
 - Primary GitHub Actions CI workflow with locked restore, formatting verification, Release build, tests, coverage, NuGet packaging, package validation, symbols, Source Link validation, and downloadable artifacts.
 - CodeQL security analysis for C#.
 - Dependency Review for pull requests.
@@ -27,3 +28,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Finalized NuGet metadata for the `ReliableWebhooks` package.
 - Set the development version baseline to `0.1.0` for the first public MVP.
 - Removed source-template-only publication decisions from the generated project release path.
+- Retry-After response parsing now ignores malformed values instead of allowing invalid metadata to interrupt delivery processing.
