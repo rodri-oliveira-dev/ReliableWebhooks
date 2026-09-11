@@ -21,8 +21,22 @@ public enum WebhookEnqueueStatus
 /// </summary>
 public sealed class WebhookEnqueueResult
 {
-    internal WebhookEnqueueResult(WebhookEnqueueStatus status, WebhookDeliverySnapshot delivery)
+    /// <summary>
+    /// Initializes a new enqueue result.
+    /// </summary>
+    /// <param name="status">The deterministic enqueue status.</param>
+    /// <param name="delivery">The current persisted delivery snapshot.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="status"/> is undefined.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="delivery"/> is <see langword="null"/>.</exception>
+    public WebhookEnqueueResult(WebhookEnqueueStatus status, WebhookDeliverySnapshot delivery)
     {
+        if (!Enum.IsDefined(status))
+        {
+            throw new ArgumentOutOfRangeException(nameof(status), status, "Enqueue status must be a defined value.");
+        }
+
+        ArgumentNullException.ThrowIfNull(delivery);
+
         Status = status;
         Delivery = delivery;
     }
