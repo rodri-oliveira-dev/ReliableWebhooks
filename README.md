@@ -1,157 +1,203 @@
 # ReliableWebhooks
 
-**English** | [Português (Brasil)](README.pt-BR.md)
+**English** | [Português (Brasil)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/README.pt-BR.md)
 
-ReliableWebhooks is a .NET 10 library for building reliable outbound webhook delivery in applications and services.
+ReliableWebhooks is a .NET 10 library for building reliable outbound webhook delivery.
 
-The project is being developed toward **v0.1.0**. The current foundation includes immutable webhook contracts, a storage contract with lease-based worker coordination, an HTTP transport that performs exactly one delivery attempt per call, and a configurable retry policy with capped exponential backoff, bounded jitter, `Retry-After` support, and maximum-attempt dead-letter decisions.
+It provides composable primitives for stable webhook identities, persistence and lease coordination, one-attempt HTTP delivery, response classification, and deterministic retry scheduling. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
 
-## Delivery model
+> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives described below; the built-in durable store and concurrent dispatcher are still part of the work required before the first public release.
 
-The v0.1.0 roadmap targets **at-least-once delivery**, not exactly-once delivery. A durable database-backed store, concurrent dispatcher, signing, dependency-injection integration, and observability are being added as separate capabilities so their contracts remain explicit and testable.
+## Why ReliableWebhooks?
 
-Webhook receivers should ultimately be designed to tolerate duplicate deliveries through application-level idempotency.
+Sending an HTTP `POST` is simple. Delivering a webhook reliably is not.
 
-## Requirements
+Real applications must handle transient HTTP failures, network errors, process crashes, concurrent workers, retry storms, abandoned work, duplicate delivery, and servers that ask clients to retry later. A reliable solution also needs to preserve enough state to resume safely after a failure without pretending that exactly-once delivery is possible over HTTP.
 
-- .NET SDK 10
-- Git
+ReliableWebhooks addresses those concerns by separating the delivery workflow into explicit responsibilities:
 
-The repository pins the expected .NET 10 SDK feature band in `global.json` and uses locked NuGet restore for reproducible builds.
+- a stable webhook message identity;
+- a persistence contract for enqueueing, claiming, leasing, retrying, and completing deliveries;
+- an HTTP transport that performs exactly one request attempt per call;
+- transport-neutral success, retryable-failure, and permanent-failure outcomes;
+- a retry policy that calculates the next attempt without sleeping or blocking a worker;
+- replaceable abstractions for persistence, classification, and retry behavior.
 
-## Build
+## How it works
+
+A ReliableWebhooks delivery is designed around a small state machine rather than a fire-and-forget HTTP call:
+
+1. Create a `WebhookMessage` with a stable ID, event type, destination, exact payload bytes, content type, and optional headers.
+2. Enqueue it through `IWebhookDeliveryStore`. Duplicate enqueue attempts with the same stable ID are deterministic.
+3. A worker atomically claims due deliveries and receives an expiring `WebhookDeliveryLease`.
+4. `WebhookHttpTransport` performs one HTTP `POST` and returns a `WebhookDeliveryResult`.
+5. Successful and permanent failures can be persisted immediately. Retryable failures are passed to `IWebhookRetryPolicy`, which returns either a future `NextAttemptAt` or a dead-letter decision.
+6. The store records the resulting state so abandoned or failed work can be resumed safely.
+
+When combined with a durable store and dispatcher, the intended delivery model is **at-least-once**, not exactly-once. Receivers must therefore be idempotent and tolerate duplicate deliveries.
+
+## Installation
+
+The planned NuGet package ID is `ReliableWebhooks` and the library targets `net10.0`.
+
+The first public package has not been published yet. After the v0.1.0 release, installation will be:
 
 ```bash
-dotnet tool restore
-dotnet restore ReliableWebhooks.slnx --locked-mode
-dotnet build ReliableWebhooks.slnx --configuration Release --no-restore
+dotnet add package ReliableWebhooks --version 0.1.0
 ```
 
-## Test
+or:
 
-```bash
-dotnet test ReliableWebhooks.slnx --configuration Release --no-build
+```xml
+<PackageReference Include="ReliableWebhooks" Version="0.1.0" />
 ```
 
-Tests use xUnit v3 on Microsoft Testing Platform.
+## Quick start
 
-## Package
-
-```bash
-dotnet pack src/ReliableWebhooks/ReliableWebhooks.csproj \
-  --configuration Release \
-  --no-build \
-  --output artifacts/packages
-```
-
-The package includes XML documentation, portable PDB symbols, Source Link metadata, the package README, and SDK package validation.
-
-The first public package is planned as `ReliableWebhooks` **v0.1.0** after the MVP reliability primitives are complete.
-
-## Current public building blocks
-
-### `WebhookMessage`
-
-Represents the immutable outbound webhook data: stable identifier, event type, destination, exact payload bytes, content type, and optional custom headers.
-
-### `IWebhookDeliveryStore`
-
-Defines the persistence boundary for reliable delivery. The contract supports deterministic idempotent enqueue, atomic claims of due work, renewable expiring leases, retry scheduling, attempt counts, last-error persistence, and terminal success/permanent-failure/dead-letter transitions.
-
-`InMemoryWebhookDeliveryStore` is provided only for tests and samples. It is process-local and **non-durable**: all state is lost when the process exits. Production applications that require reliable delivery must use a durable implementation of `IWebhookDeliveryStore`.
-
-### `WebhookHttpTransport`
-
-Performs one HTTP `POST` attempt and returns a stable `WebhookDeliveryResult`. The transport intentionally does not retry, sleep, or schedule future work.
-
-Automatic redirects must be disabled on the supplied `HttpClient` so one transport call cannot silently become multiple HTTP requests or change the request method. Configure the primary handler with `AllowAutoRedirect = false` when using `HttpClientHandler`, `SocketsHttpHandler`, or `IHttpClientFactory`.
-
-Malformed `Retry-After` values are ignored. Valid delta-seconds and HTTP-date values are exposed through `WebhookDeliveryResult` for retry scheduling.
-
-### Response classification
-
-The default classifier treats:
-
-- `2xx` as success;
-- `408`, `425`, `429`, and `5xx` as retryable failures;
-- other status codes, including redirects, as permanent failures.
-
-Consumers can replace the classifier through `IWebhookHttpResponseClassifier`.
-
-### Retry scheduling
-
-`DefaultWebhookRetryPolicy` calculates retry schedules synchronously. It never calls `Task.Delay` and never blocks a worker; it only returns a `WebhookRetryDecision` containing either a future `NextAttemptAt` or a dead-letter decision.
-
-Default `WebhookRetryPolicyOptions` values are:
-
-- `MaxAttempts = 5` — includes the current attempt;
-- `BaseDelay = 1 second`;
-- `MaxDelay = 5 minutes`;
-- `JitterFactor = 0.2` — adds between zero and 20% of the exponential delay before the maximum-delay cap is applied.
-
-The exponential delay doubles per started attempt. Valid `Retry-After` metadata is honored only when it would schedule the retry later than the locally calculated delay. The final delay, including `Retry-After`, never exceeds `MaxDelay`. Once `MaxAttempts` is reached, the policy returns `WebhookRetryAction.DeadLetter`.
+The current API exposes the delivery primitives directly. The example below uses the in-memory store only to demonstrate the workflow.
 
 ```csharp
-var policy = new DefaultWebhookRetryPolicy(
-    new WebhookRetryPolicyOptions
-    {
-        MaxAttempts = 5,
-        BaseDelay = TimeSpan.FromSeconds(2),
-        MaxDelay = TimeSpan.FromMinutes(10),
-        JitterFactor = 0.2,
-    });
+using System;
+using System.Linq;
+using System.Net.Http;
+using System.Text.Json;
+using ReliableWebhooks;
 
-WebhookRetryContext context = WebhookRetryContext.FromResult(
-    deliverySnapshot,
-    deliveryResult,
-    DateTimeOffset.UtcNow);
+byte[] payload = JsonSerializer.SerializeToUtf8Bytes(new
+{
+    OrderId = 123,
+    Status = "created",
+});
 
-WebhookRetryDecision decision = policy.GetDecision(context);
+var message = new WebhookMessage(
+    id: Guid.NewGuid().ToString("N"),
+    eventType: "order.created",
+    destination: new Uri("https://example.com/webhooks"),
+    payload: payload,
+    contentType: "application/json");
+
+IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore();
+DateTimeOffset now = DateTimeOffset.UtcNow;
+
+await store.EnqueueAsync(message, now);
+
+WebhookDeliveryLease lease = (await store.ClaimDueAsync(
+    now,
+    leaseDuration: TimeSpan.FromMinutes(1),
+    maxCount: 1)).Single();
+
+using var handler = new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+};
+
+using var httpClient = new HttpClient(handler);
+var transport = new WebhookHttpTransport(httpClient);
+
+WebhookDeliveryResult result = await transport.SendAsync(lease.Delivery.Message);
 ```
 
-Consumers can replace the retry strategy through `IWebhookRetryPolicy`. Tests or custom strategies that require deterministic jitter can supply an `IWebhookRetryJitterSource`.
+The one-minute lease intentionally exceeds the transport's default 30-second attempt timeout, leaving time to persist the result while ownership is still valid. Production workers should size leases beyond their complete attempt budget or renew active leases when processing can run longer.
 
-## Engineering baseline
+`InMemoryWebhookDeliveryStore` is process-local and **not durable**. It exists for tests and samples only and must not be used as production persistence.
 
-The repository keeps a production-oriented library baseline with:
+### Handling the result
 
-- nullable reference types and warnings as errors;
-- .NET analyzers and security analyzers;
-- NuGet Audit and package lock files;
-- formatting verification;
-- CI build, tests, coverage, pack, package verification, symbols, and Source Link validation;
-- CodeQL and Dependency Review;
-- optional SonarQube Cloud analysis;
-- release validation and NuGet.org Trusted Publishing through GitHub OIDC.
+The transport deliberately does not retry. It reports one attempt and leaves the state transition to the caller or dispatcher.
 
-See [docs/sonarqube-cloud.md](docs/sonarqube-cloud.md) for SonarQube Cloud setup.
+```csharp
+DateTimeOffset completedAt = DateTimeOffset.UtcNow;
 
-## Release process
+switch (result.Outcome)
+{
+    case WebhookDeliveryOutcome.Success:
+        await store.MarkSucceededAsync(lease, completedAt);
+        break;
 
-`.github/workflows/release.yml` validates release candidates on pull requests and supports explicit manual publication from `main`.
+    case WebhookDeliveryOutcome.PermanentFailure:
+        await store.MarkPermanentlyFailedAsync(
+            lease,
+            completedAt,
+            lastError: null);
+        break;
 
-For official publication, the workflow requires an exact semantic version, validates the package and release artifacts, and can publish to NuGet.org through Trusted Publishing when the `NUGET_USER` repository variable is configured.
+    case WebhookDeliveryOutcome.RetryableFailure:
+        var retryPolicy = new DefaultWebhookRetryPolicy();
+        WebhookRetryDecision decision = retryPolicy.GetDecision(
+            WebhookRetryContext.FromResult(
+                lease.Delivery,
+                result,
+                completedAt));
 
-## Project structure
+        if (decision.ShouldRetry)
+        {
+            await store.ScheduleRetryAsync(
+                lease,
+                completedAt,
+                decision.NextAttemptAt!.Value,
+                lastError: null);
+        }
+        else
+        {
+            await store.DeadLetterAsync(
+                lease,
+                completedAt,
+                lastError: null);
+        }
 
-```text
-.
-├── .github/workflows/
-├── docs/
-├── scripts/
-├── src/ReliableWebhooks/
-├── tests/ReliableWebhooks.Tests/
-├── CHANGELOG.md
-├── Directory.Build.props
-├── Directory.Packages.props
-├── ReliableWebhooks.slnx
-└── global.json
+        break;
+}
 ```
 
-## Security
+## Default behavior
 
-Use [SECURITY.md](SECURITY.md) to report suspected vulnerabilities privately. Payloads, signing secrets, and other sensitive delivery data should never be exposed through logs or diagnostics by default.
+| Area | Default |
+| --- | --- |
+| HTTP attempt timeout | 30 seconds |
+| Captured response body | Up to 16 KiB |
+| Success classification | Any `2xx` response |
+| Retryable HTTP responses | `408`, `425`, `429`, and `5xx` |
+| Permanent HTTP responses | Other status codes, including redirects |
+| Maximum attempts | 5, including the current attempt |
+| Base retry delay | 1 second |
+| Maximum retry delay | 5 minutes |
+| Jitter | 0 to 20% positive jitter before the maximum-delay cap |
+| `Retry-After` | Honored when it schedules later than the local retry delay, capped by the configured maximum delay |
 
-## Contributing
+Automatic redirects must be disabled on the `HttpClient` handler so a single transport invocation cannot silently become multiple HTTP requests or change the request method.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the expected development and pull-request workflow. Consumer-relevant changes should be recorded under `Unreleased` in [CHANGELOG.md](CHANGELOG.md).
+Malformed `Retry-After` values are ignored. Valid delta-seconds and HTTP-date values are exposed through `WebhookDeliveryResult` and consumed by the default retry policy.
+
+## Delivery guarantees and boundaries
+
+ReliableWebhooks is designed around explicit delivery semantics:
+
+- **At-least-once, not exactly-once.** Duplicate delivery can occur, especially when a worker fails after sending but before persisting the result.
+- **Stable IDs support duplicate-safe enqueueing.** Receivers still need application-level idempotency.
+- **Leases coordinate active ownership.** While a lease is valid, two workers should not own the same delivery simultaneously; expired work can be reclaimed.
+- **One transport call means one HTTP attempt.** Retry loops are intentionally outside the transport.
+- **Retry policies schedule; they do not wait.** `DefaultWebhookRetryPolicy` returns a future timestamp or dead-letter decision and never calls `Task.Delay`.
+- **Persistence is replaceable.** The core package does not depend on a specific database provider.
+
+The current development version does not yet include the production durable EF Core store, concurrent dispatcher, HMAC signing, dependency-injection integration, or observability planned for v0.1.0.
+
+## Extensibility
+
+The main behaviors are exposed through public abstractions:
+
+- `IWebhookDeliveryStore` — persistence and lease coordination;
+- `IWebhookHttpResponseClassifier` — HTTP response classification;
+- `IWebhookRetryPolicy` — retry and dead-letter decisions;
+- `IWebhookRetryJitterSource` — deterministic or custom jitter generation.
+
+This keeps persistence, transport behavior, and retry strategy independently replaceable and testable.
+
+## Support and contribution
+
+Use [GitHub Issues](https://github.com/rodri-oliveira-dev/ReliableWebhooks/issues) for bugs, questions, and feature discussions.
+
+For security issues, follow [SECURITY.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/SECURITY.md) instead of opening a public issue.
+
+Contributions are welcome. See [CONTRIBUTING.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/CONTRIBUTING.md) for the contribution workflow and [CHANGELOG.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/CHANGELOG.md) for notable changes.
+
+ReliableWebhooks is licensed under the [MIT License](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/LICENSE).
