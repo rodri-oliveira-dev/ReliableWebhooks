@@ -61,7 +61,13 @@ public sealed class WebhookMessageTests
     [Fact]
     public void ConstructorRejectsNullDestination()
     {
-        Assert.Throws<ArgumentNullException>(() => CreateMessage(destination: null!));
+        Assert.Throws<ArgumentNullException>(
+            () => new WebhookMessage(
+                "webhook-123",
+                "order.created",
+                null!,
+                new byte[] { 1, 2, 3 },
+                "application/json"));
     }
 
     [Theory]
