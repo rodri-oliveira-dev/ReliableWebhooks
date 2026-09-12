@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Core webhook contracts for immutable messages, delivery lifecycle states, delivery attempts, and delivery snapshots.
 - Store abstraction for idempotent enqueue, atomic due-delivery claims, renewable expiring leases, retry scheduling, terminal delivery transitions, and a non-durable in-memory implementation for tests and samples.
+- Reusable `IWebhookDeliveryStore` conformance tests and persistence implementation guidance covering idempotency, atomic claims, leases, stale ownership, retries, terminal transitions, cancellation, durability boundaries, and backend-failure expectations.
 - HTTP webhook transport for one-attempt `POST` delivery, extensible response classification, per-attempt timeout handling, bounded response-body capture, `Retry-After` metadata, and explicit network/timeout results without internal retry loops.
 - Configurable retry policy with capped exponential backoff, deterministic bounded jitter, `Retry-After` delta/date support, maximum-attempt dead-letter decisions, and replaceable retry/jitter abstractions.
 - HMAC-SHA256 webhook request signing over the exact outbound payload bytes and a Unix timestamp, with replaceable signer/secret-provider abstractions and configurable delivery header names.
@@ -32,4 +33,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Finalized NuGet metadata for the `ReliableWebhooks` package.
 - Set the development version baseline to `0.1.0` for the first public MVP.
 - Removed source-template-only publication decisions from the generated project release path.
+- Clarified `IWebhookDeliveryStore` as a technology-agnostic persistence port: the core package defines reliability semantics while consumers choose EF Core, Dapper, files, Redis, document stores, or other conforming persistence mechanisms.
 - Retry-After response parsing now ignores malformed values instead of allowing invalid metadata to interrupt delivery processing.
