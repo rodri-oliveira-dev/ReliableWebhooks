@@ -41,8 +41,30 @@ public abstract class WebhookDeliveryStoreConformanceTests
         Assert.Equal(original.Destination, second.Delivery.Message.Destination);
         Assert.Equal(original.ContentType, second.Delivery.Message.ContentType);
         Assert.Equal(original.Payload.ToArray(), second.Delivery.Message.Payload.ToArray());
+        Assert.Equal(original.Headers, second.Delivery.Message.Headers);
         Assert.Equal(Now, second.Delivery.NextAttemptAt);
         Assert.Equal(0, second.Delivery.AttemptCount);
+    }
+
+    [Fact]
+    public async Task StableIdentifiersAreOpaqueAndCaseSensitive()
+    {
+        IWebhookDeliveryStore store = CreateStore();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+
+        WebhookEnqueueResult lower = await store.EnqueueAsync(
+            CreateMessage("webhook-1"),
+            Now,
+            cancellationToken);
+        WebhookEnqueueResult upper = await store.EnqueueAsync(
+            CreateMessage("WEBHOOK-1"),
+            Now,
+            cancellationToken);
+
+        Assert.Equal(WebhookEnqueueStatus.Enqueued, lower.Status);
+        Assert.Equal(WebhookEnqueueStatus.Enqueued, upper.Status);
+        Assert.Equal("webhook-1", lower.Delivery.Message.Id);
+        Assert.Equal("WEBHOOK-1", upper.Delivery.Message.Id);
     }
 
     [Fact]
