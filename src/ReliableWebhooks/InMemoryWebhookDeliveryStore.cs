@@ -21,7 +21,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
     {
     }
 
-    /// <summary>Initializes the store with a logger for enqueue and claim lifecycle events.</summary>
+    /// <summary>Initializes the store with a logger for enqueue lifecycle events.</summary>
     /// <param name="logger">The logger that receives safe structured lifecycle events.</param>
     public InMemoryWebhookDeliveryStore(ILogger logger)
     {
@@ -77,8 +77,6 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        List<WebhookDeliveryLease> leases;
-
         lock (gate)
         {
             Entry[] dueEntries = entries.Values
@@ -88,7 +86,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
                 .Take(maxCount)
                 .ToArray();
 
-            leases = new List<WebhookDeliveryLease>(dueEntries.Length);
+            List<WebhookDeliveryLease> leases = new(dueEntries.Length);
             DateTimeOffset expiresAt = now.Add(leaseDuration);
 
             foreach (Entry entry in dueEntries)
@@ -103,18 +101,9 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
                 WebhookDeliverySnapshot snapshot = CreateSnapshot(entry);
                 leases.Add(new WebhookDeliveryLease(snapshot, token, expiresAt));
             }
-        }
 
-        foreach (WebhookDeliveryLease lease in leases)
-        {
-            ReliableWebhooksLog.Claimed(
-                logger,
-                lease.Delivery.Message.Id,
-                lease.Delivery.Message.EventType,
-                lease.Delivery.AttemptCount);
+            return Task.FromResult<IReadOnlyList<WebhookDeliveryLease>>(leases);
         }
-
-        return Task.FromResult<IReadOnlyList<WebhookDeliveryLease>>(leases);
     }
 
     /// <inheritdoc />
