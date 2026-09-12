@@ -66,6 +66,7 @@ public sealed class WebhookSigningTests
             new TestSecretProvider(Encoding.UTF8.GetBytes("whsec_test_secret")));
         WebhookHttpTransport transport = new(
             client,
+            classifier: null,
             options: new WebhookHttpTransportOptions
             {
                 Signing = new WebhookSigningOptions
@@ -102,6 +103,7 @@ public sealed class WebhookSigningTests
         using HttpClient client = CreateClient(handler);
         WebhookHttpTransport transport = new(
             client,
+            classifier: null,
             options: new WebhookHttpTransportOptions
             {
                 Signing = new WebhookSigningOptions
@@ -131,6 +133,7 @@ public sealed class WebhookSigningTests
         using HttpClient client = CreateClient(new SigningRecordingHandler());
         WebhookHttpTransport transport = new(
             client,
+            classifier: null,
             options: new WebhookHttpTransportOptions
             {
                 AttemptTimeout = TimeSpan.FromMilliseconds(25),
@@ -168,6 +171,7 @@ public sealed class WebhookSigningTests
             new TestSecretProvider(Encoding.UTF8.GetBytes(secretText)));
         WebhookHttpTransport transport = new(
             client,
+            classifier: null,
             options: new WebhookHttpTransportOptions
             {
                 Signing = new WebhookSigningOptions
