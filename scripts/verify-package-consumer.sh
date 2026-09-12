@@ -15,14 +15,22 @@ dotnet new console --framework net10.0 --output "$consumer" >/dev/null
 project="$(find "$consumer" -maxdepth 1 -name '*.csproj' -print -quit)"
 test -n "$project"
 
+cat > "$consumer/NuGet.Config" <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="local-release" value="$package_dir" />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+  </packageSources>
+</configuration>
+EOF
+
 dotnet add "$project" package ReliableWebhooks \
-  --version "$version" \
-  --source "$package_dir" \
-  --source https://api.nuget.org/v3/index.json >/dev/null
+  --version "$version" >/dev/null
 
 dotnet add "$project" package Microsoft.Extensions.DependencyInjection \
-  --version 10.0.12 \
-  --source https://api.nuget.org/v3/index.json >/dev/null
+  --version 10.0.12 >/dev/null
 
 cat > "$consumer/Program.cs" <<'EOF'
 using Microsoft.Extensions.DependencyInjection;
