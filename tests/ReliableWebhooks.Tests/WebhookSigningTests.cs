@@ -126,6 +126,40 @@ public sealed class WebhookSigningTests
     }
 
     [Fact]
+    public async Task AttemptTimeoutIncludesSigningSecretResolution()
+    {
+        using HttpClient client = CreateClient(new SigningRecordingHandler());
+        WebhookHttpTransport transport = new(
+            client,
+            options: new WebhookHttpTransportOptions
+            {
+                AttemptTimeout = TimeSpan.FromMilliseconds(25),
+            },
+            signer: new BlockingSigner());
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(new byte[] { 1, 2, 3 }),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.RetryableFailure, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.Timeout, result.FailureKind);
+        Assert.Null(result.StatusCode);
+    }
+
+    [Fact]
+    public void TransportPreservesOriginalThreeParameterConstructor()
+    {
+        System.Reflection.ConstructorInfo? constructor = typeof(WebhookHttpTransport).GetConstructor(
+        [
+            typeof(HttpClient),
+            typeof(IWebhookHttpResponseClassifier),
+            typeof(WebhookHttpTransportOptions),
+        ]);
+
+        Assert.NotNull(constructor);
+    }
+
+    [Fact]
     public async Task SigningFailuresProducedByLibraryDoNotExposeSecret()
     {
         const string secretText = "do-not-expose-this-secret";
@@ -210,6 +244,20 @@ public sealed class WebhookSigningTests
             ArgumentNullException.ThrowIfNull(message);
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult(signature);
+        }
+    }
+
+    private sealed class BlockingSigner : IWebhookRequestSigner
+    {
+        public async ValueTask<string> SignAsync(
+            WebhookMessage message,
+            ReadOnlyMemory<byte> payload,
+            DateTimeOffset timestamp,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return "signature";
         }
     }
 
