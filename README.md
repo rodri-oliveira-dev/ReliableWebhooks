@@ -26,7 +26,7 @@ ReliableWebhooks addresses those concerns by separating the delivery workflow in
 - a persistence contract for enqueueing, claiming, leasing, retrying, and completing deliveries;
 - a concurrent dispatcher that claims only available capacity and coordinates graceful shutdown;
 - an HTTP transport that performs exactly one request attempt per call;
-- optional HMAC-SHA256 request signing over the exact outbound payload bytes;
+- optional HMAC-SHA256 request signing over generated metadata and the exact outbound payload bytes;
 - transport-neutral success, retryable-failure, and permanent-failure outcomes;
 - a retry policy that calculates the next attempt without sleeping or blocking a worker;
 - structured logs, traces, and metrics built on standard .NET diagnostics APIs;
@@ -191,6 +191,7 @@ With the default `WebhookSigningOptions`, each signed request contains:
 
 - `X-Webhook-Id`: the stable `WebhookMessage.Id`;
 - `X-Webhook-Event`: the `WebhookMessage.EventType`;
+- `Content-Type`: the `WebhookMessage.ContentType`;
 - `X-Webhook-Timestamp`: the UTC Unix timestamp in seconds;
 - `X-Webhook-Signature`: `v1=<lowercase HMAC-SHA256 hex digest>`.
 
@@ -200,19 +201,24 @@ Header names can be customized through `WebhookHttpTransportOptions.Signing`. Ge
 
 Custom headers supplied to `WebhookMessage` must use valid HTTP token names, are compared case-insensitively for duplicates, and must not contain control characters such as CR, LF, or NUL in their values. Treat custom header values as sensitive whenever they come from tenants, subscribers, or other external configuration.
 
-The canonical HMAC input is:
+The `v1` canonical HMAC input is versioned and length-prefixed:
 
 ```text
-UTF8(unixTimestampSeconds + ".") || exactRequestPayloadBytes
+ASCII("rw-hmac-sha256/v1\0")
+|| frame(UTF8(unixTimestampSeconds))
+|| frame(UTF8(webhookId))
+|| frame(UTF8(eventType))
+|| frame(UTF8(contentType))
+|| frame(exactRequestPayloadBytes)
 ```
 
-The payload bytes are not reserialized or normalized before signing. The same byte array is used both for HMAC calculation and for the HTTP request content.
+Each `frame(value)` is an eight-byte big-endian length followed by the exact value bytes. The payload bytes are not reserialized or normalized before signing. The same byte array is used both for HMAC calculation and for the HTTP request content. The authenticated values are the timestamp, webhook ID, event type, content type, and body bytes. Custom headers, destination URI, and the configurable signing header names are not part of the built-in HMAC envelope.
 
 A receiver can verify a delivery independently by:
 
-1. reading the timestamp and signature headers without modifying the request body;
+1. reading the generated ID, event, timestamp, signature, and content type without modifying the request body;
 2. parsing the timestamp as Unix seconds and rejecting timestamps outside the receiver's replay-tolerance window;
-3. rebuilding the canonical bytes as UTF-8 `timestamp + "."` followed by the raw request body bytes;
+3. rebuilding the `rw-hmac-sha256/v1` canonical frames with those metadata values and the raw request body bytes;
 4. calculating HMAC-SHA256 with the shared secret;
 5. encoding the digest as lowercase hexadecimal and prefixing it with `v1=`;
 6. comparing the calculated signature with the received signature using a constant-time comparison.
@@ -314,7 +320,7 @@ The application can then add OTLP, Azure Monitor, Prometheus, Grafana/Tempo, Dat
 | Retryable HTTP responses | `408`, `425`, `429`, and `5xx` |
 | Permanent HTTP responses | Other status codes, including redirects |
 | Signing algorithm | HMAC-SHA256 when a signer is configured |
-| Signing canonical format | `UTF8(unixTimestamp + ".") || payload bytes` |
+| Signing canonical format | `rw-hmac-sha256/v1` marker plus length-prefixed timestamp, webhook ID, event type, content type, and payload bytes |
 | Signing headers | `X-Webhook-Id`, `X-Webhook-Event`, `X-Webhook-Timestamp`, `X-Webhook-Signature` |
 | Maximum attempts | 5, including the current attempt |
 | Base retry delay | 1 second |

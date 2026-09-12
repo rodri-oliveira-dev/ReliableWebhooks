@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
@@ -20,16 +21,18 @@ internal static class ReceiverEndpoint
     {
         byte[] payload = await ReadPayloadAsync(request, cancellationToken).ConfigureAwait(false);
 
-        if (!VerifySignature(request.Headers, payload, signingSecret.Value.Span))
+        if (!VerifySignature(request.Headers, request.ContentType, payload, signingSecret.Value.Span))
         {
             return Results.Unauthorized();
         }
 
         string headerWebhookId = request.Headers["X-Webhook-Id"].ToString();
+        string headerEventType = request.Headers["X-Webhook-Event"].ToString();
         SignedPayload? signedPayload = ParseSignedPayload(payload);
 
         if (signedPayload is null
             || !string.Equals(headerWebhookId, signedPayload.WebhookId, StringComparison.Ordinal)
+            || !string.Equals(headerEventType, $"sample.{signedPayload.Behavior}", StringComparison.Ordinal)
             || !string.Equals(behavior, signedPayload.Behavior, StringComparison.Ordinal))
         {
             return Results.BadRequest();
@@ -49,13 +52,19 @@ internal static class ReceiverEndpoint
 
     internal static bool VerifySignature(
         IHeaderDictionary headers,
+        string? contentType,
         ReadOnlySpan<byte> payload,
         ReadOnlySpan<byte> secret)
     {
+        string webhookId = headers["X-Webhook-Id"].ToString();
+        string eventType = headers["X-Webhook-Event"].ToString();
         string timestampText = headers["X-Webhook-Timestamp"].ToString();
         string signatureText = headers["X-Webhook-Signature"].ToString();
 
-        if (!long.TryParse(
+        if (string.IsNullOrWhiteSpace(webhookId)
+            || string.IsNullOrWhiteSpace(eventType)
+            || string.IsNullOrWhiteSpace(contentType)
+            || !long.TryParse(
                 timestampText,
                 NumberStyles.None,
                 CultureInfo.InvariantCulture,
@@ -93,13 +102,16 @@ internal static class ReceiverEndpoint
         }
 
         byte[] key = secret.ToArray();
-        byte[] prefix = Encoding.UTF8.GetBytes(string.Concat(timestampText, "."));
 
         try
         {
             using IncrementalHash hmac = IncrementalHash.CreateHMAC(HashAlgorithmName.SHA256, key);
-            hmac.AppendData(prefix);
-            hmac.AppendData(payload);
+            hmac.AppendData("rw-hmac-sha256/v1\0"u8);
+            AppendUtf8Frame(hmac, timestampText);
+            AppendUtf8Frame(hmac, webhookId);
+            AppendUtf8Frame(hmac, eventType);
+            AppendUtf8Frame(hmac, contentType);
+            AppendFrame(hmac, payload);
             byte[] expectedDigest = hmac.GetHashAndReset();
 
             return expectedDigest.Length == suppliedDigest.Length
@@ -109,6 +121,19 @@ internal static class ReceiverEndpoint
         {
             CryptographicOperations.ZeroMemory(key);
         }
+    }
+
+    private static void AppendUtf8Frame(IncrementalHash hmac, string value)
+    {
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(value));
+    }
+
+    private static void AppendFrame(IncrementalHash hmac, ReadOnlySpan<byte> value)
+    {
+        Span<byte> length = stackalloc byte[sizeof(long)];
+        BinaryPrimitives.WriteInt64BigEndian(length, value.Length);
+        hmac.AppendData(length);
+        hmac.AppendData(value);
     }
 
     private static SignedPayload? ParseSignedPayload(ReadOnlyMemory<byte> payload)

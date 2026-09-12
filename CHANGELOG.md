@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The DI-managed webhook `HttpClient` now disables automatic cookies to avoid hidden state sharing between deliveries.
 - Dispatcher delivery-scoped extension failures are isolated to the active delivery and progress through retry/dead-letter handling instead of stopping unrelated processing.
 - The built-in HMAC-SHA256 signer now rejects signing secrets shorter than 32 bytes (256 bits) so weak keys fail closed before delivery.
+- The built-in HMAC-SHA256 `v1` signature now authenticates the timestamp, webhook ID, event type, content type, and exact payload bytes with a versioned length-prefixed canonical envelope.
 
 ## [0.1.0] - 2026-09-12
 

@@ -6,7 +6,7 @@ namespace ReliableWebhooks;
 public interface IWebhookRequestSigner
 {
     /// <summary>
-    /// Signs the exact payload bytes that will be sent for a webhook delivery attempt.
+    /// Signs one webhook delivery attempt using the supplied message metadata, payload, and timestamp.
     /// </summary>
     /// <param name="message">The webhook message being delivered.</param>
     /// <param name="payload">The exact payload bytes that will be sent in the HTTP request.</param>

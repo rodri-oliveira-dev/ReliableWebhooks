@@ -23,7 +23,7 @@ public sealed class WebhookSigningTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            "v1=ae279a8d47fb72ce954704002c4bd202b91931b4c0d0c183d8aa9c4457b8375a",
+            "v1=7d07a2e15140fdd6dd402c285ce17cbdeea8722821988c15953386a6fb524950",
             signature);
     }
 
@@ -66,7 +66,7 @@ public sealed class WebhookSigningTests
     }
 
     [Fact]
-    public async Task HmacSignerChangesWhenPayloadOrTimestampChanges()
+    public async Task HmacSignerChangesWhenSignedEnvelopeChanges()
     {
         HmacSha256WebhookRequestSigner signer = new(
             new TestSecretProvider(CreateStrongTestSecret()));
@@ -89,9 +89,27 @@ public sealed class WebhookSigningTests
             originalPayload,
             FixedTimestamp.AddSeconds(1),
             TestContext.Current.CancellationToken);
+        string idMutation = await signer.SignAsync(
+            CreateMessage(originalPayload, id: "webhook-456"),
+            originalPayload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
+        string eventTypeMutation = await signer.SignAsync(
+            CreateMessage(originalPayload, eventType: "order.updated"),
+            originalPayload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
+        string contentTypeMutation = await signer.SignAsync(
+            CreateMessage(originalPayload, contentType: "application/vnd.example+json"),
+            originalPayload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
 
         Assert.NotEqual(original, payloadMutation);
         Assert.NotEqual(original, timestampMutation);
+        Assert.NotEqual(original, idMutation);
+        Assert.NotEqual(original, eventTypeMutation);
+        Assert.NotEqual(original, contentTypeMutation);
     }
 
     [Fact]
@@ -115,7 +133,7 @@ public sealed class WebhookSigningTests
             signer: signer);
         WebhookMessage message = CreateMessage(
             payload,
-            new Dictionary<string, string>
+            headers: new Dictionary<string, string>
             {
                 ["X-Webhook-Signature"] = "untrusted-value",
             });
@@ -130,7 +148,7 @@ public sealed class WebhookSigningTests
         Assert.Equal("order.created", handler.GetHeader("X-Webhook-Event"));
         Assert.Equal("1767323045", handler.GetHeader("X-Webhook-Timestamp"));
         Assert.Equal(
-            "v1=ae279a8d47fb72ce954704002c4bd202b91931b4c0d0c183d8aa9c4457b8375a",
+            "v1=7d07a2e15140fdd6dd402c285ce17cbdeea8722821988c15953386a6fb524950",
             handler.GetHeader("X-Webhook-Signature"));
     }
 
@@ -243,14 +261,17 @@ public sealed class WebhookSigningTests
 
     private static WebhookMessage CreateMessage(
         ReadOnlyMemory<byte> payload,
+        string id = "webhook-123",
+        string eventType = "order.created",
+        string contentType = "application/json",
         IReadOnlyDictionary<string, string>? headers = null)
     {
         return new WebhookMessage(
-            "webhook-123",
-            "order.created",
+            id,
+            eventType,
             new Uri("https://example.test/webhooks"),
             payload,
-            "application/json",
+            contentType,
             headers);
     }
 

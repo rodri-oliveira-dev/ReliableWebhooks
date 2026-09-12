@@ -8,7 +8,7 @@ For a runnable local example, see [`samples/ReliableWebhooks.Sample`](../samples
 
 ReliableWebhooks is designed for **at-least-once delivery**, not exactly-once delivery. A delivery can reach the receiver more than once when a worker sends the HTTP request successfully but fails before persisting the successful transition, or when a lease expires while ownership is uncertain.
 
-Receivers must therefore be idempotent. Prefer a stable application identifier carried inside the signed payload. The default `X-Webhook-Id` header is useful for correlation, but it is not part of the default HMAC canonical bytes; if a receiver uses that header as its idempotency key, it should first verify the signature and cross-check the header against an identifier inside the signed payload.
+Receivers must therefore be idempotent. Prefer a stable application identifier carried inside the signed payload. The default HMAC envelope authenticates the generated webhook ID header, but applications should still decide whether that delivery ID or a domain identifier inside the signed payload is the correct idempotency key for their receiver.
 
 At-least-once behavior across application restarts additionally requires a conforming **durable** `IWebhookDeliveryStore`. `InMemoryWebhookDeliveryStore` is process-local and exists only for tests, samples, and local experimentation.
 
@@ -236,16 +236,22 @@ With default signing options, requests contain:
 
 - `X-Webhook-Id`;
 - `X-Webhook-Event`;
+- `Content-Type`;
 - `X-Webhook-Timestamp`;
 - `X-Webhook-Signature` in the form `v1=<lowercase hex digest>`.
 
-The signed bytes are exactly:
+The built-in `v1` signed envelope is:
 
 ```text
-UTF8(unixTimestampSeconds + ".") || rawRequestBodyBytes
+ASCII("rw-hmac-sha256/v1\0")
+|| frame(UTF8(unixTimestampSeconds))
+|| frame(UTF8(webhookId))
+|| frame(UTF8(eventType))
+|| frame(UTF8(contentType))
+|| frame(rawRequestBodyBytes)
 ```
 
-`X-Webhook-Id` and `X-Webhook-Event` are delivery metadata but are **not included in those canonical HMAC bytes**. If a receiver relies on either value for authorization, idempotency, or routing, put the authoritative value in the signed payload as well and compare the header with that signed value after signature verification. The runnable sample demonstrates this cross-check for the webhook ID.
+Each `frame(value)` is an eight-byte big-endian length followed by the exact value bytes. The authenticated values are the timestamp, stable webhook ID, event type, content type, and exact body bytes. Custom headers, destination URI, and the configurable signing header names are outside the built-in HMAC envelope. If receivers authorize or route by custom headers or destination-specific context, bind those values in the application payload or use a custom signer.
 
 Custom headers are validated before a `WebhookMessage` can be enqueued or persisted. Header names must use HTTP token syntax, duplicate names are rejected case-insensitively, values cannot be null, and values cannot contain control characters such as CR, LF, or NUL. The HTTP transport applies custom headers through normal validated `HttpHeaders` APIs and supports both request headers and content headers such as `Content-Language`. Applications that let tenants or subscribers configure custom headers remain responsible for deciding which header names are allowed for their domain and for treating header values as sensitive data.
 
@@ -258,6 +264,9 @@ Verify the raw request body before parsing or reserializing it. A receiver shoul
 ```csharp
 static bool Verify(
     string timestampText,
+    string webhookId,
+    string eventType,
+    string contentType,
     string signatureText,
     ReadOnlySpan<byte> body,
     ReadOnlySpan<byte> sharedSecret)
@@ -278,14 +287,16 @@ static bool Verify(
     }
 
     byte[] key = sharedSecret.ToArray();
-    byte[] prefix = Encoding.UTF8.GetBytes(timestampText + ".");
-
     try
     {
         using IncrementalHash hmac =
             IncrementalHash.CreateHMAC(HashAlgorithmName.SHA256, key);
-        hmac.AppendData(prefix);
-        hmac.AppendData(body);
+        hmac.AppendData("rw-hmac-sha256/v1\0"u8);
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(timestampText));
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(webhookId));
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(eventType));
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(contentType));
+        AppendFrame(hmac, body);
         byte[] expectedDigest = hmac.GetHashAndReset();
 
         return expectedDigest.Length == suppliedDigest.Length
@@ -296,18 +307,26 @@ static bool Verify(
         CryptographicOperations.ZeroMemory(key);
     }
 }
+
+static void AppendFrame(IncrementalHash hmac, ReadOnlySpan<byte> value)
+{
+    Span<byte> length = stackalloc byte[sizeof(long)];
+    BinaryPrimitives.WriteInt64BigEndian(length, value.Length);
+    hmac.AppendData(length);
+    hmac.AppendData(value);
+}
 ```
 
-The runnable sample includes timestamp parsing and replay-window validation around this same calculation.
+The runnable sample includes timestamp parsing and replay-window validation around this same calculation, then compares the authenticated generated metadata with application payload fields before routing the delivery.
 
 ## Receiver idempotency
 
-Signature verification authenticates the timestamp and raw body bytes; it does not make receiver processing idempotent and does not authenticate metadata headers that are outside the canonical bytes.
+Signature verification authenticates the timestamp, generated webhook ID, generated event type, content type, and raw body bytes; it does not make receiver processing idempotent and does not authenticate custom headers, destination URI, or other metadata outside the canonical bytes.
 
 A typical receiver should:
 
 1. validate the signature and replay window against the raw body;
-2. read a stable webhook ID from the authenticated payload, or cross-check a metadata header against the signed payload before trusting it;
+2. choose a stable idempotency key from authenticated data, usually either the signed generated webhook ID or a domain identifier inside the signed payload;
 3. atomically check that stable ID in its own idempotency store;
 4. if already completed, return the same successful response without repeating side effects;
 5. otherwise perform the business operation and persist the completed webhook ID in the same transaction whenever possible;
@@ -406,7 +425,7 @@ Confirm that a store is registered. `AddReliableWebhooks` intentionally does not
 
 ### A webhook is delivered more than once
 
-This can be expected under at-least-once semantics. Verify that the receiver deduplicates by a stable ID authenticated by the signed payload. Also inspect worker crashes, attempt timeouts, lease duration, and failures while persisting success.
+This can be expected under at-least-once semantics. Verify that the receiver deduplicates by a stable ID authenticated by the signed HMAC envelope. Also inspect worker crashes, attempt timeouts, lease duration, and failures while persisting success.
 
 ### Work remains `InProgress`
 
@@ -422,7 +441,7 @@ Check `Retry-After`, exponential backoff, jitter, `MaxDelay`, and the dispatcher
 
 ### Signature verification fails
 
-Verify the raw body bytes, timestamp text, shared secret, and signing-header names. Do not parse and reserialize JSON before calculating the HMAC. Ensure the receiver includes `timestamp + "."` before the exact body bytes and compares the digest in constant time.
+Verify the raw body bytes, timestamp text, generated webhook ID, event type, content type, shared secret, and signing-header names. Do not parse and reserialize JSON before calculating the HMAC. Ensure the receiver rebuilds the `rw-hmac-sha256/v1` length-prefixed frames before the exact body bytes and compares the digest in constant time.
 
 ### Process restarts lose queued work
 
