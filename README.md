@@ -4,9 +4,9 @@
 
 ReliableWebhooks is a .NET 10 library for building reliable outbound webhook delivery.
 
-It provides composable primitives for stable webhook identities, persistence and lease coordination, one-attempt HTTP delivery, HMAC-SHA256 request signing, response classification, and deterministic retry scheduling. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
+It provides composable primitives for stable webhook identities, persistence and lease coordination, bounded concurrent dispatching, one-attempt HTTP delivery, HMAC-SHA256 request signing, response classification, and deterministic retry scheduling. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
 
-> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives described below; the built-in durable store and concurrent dispatcher are still part of the work required before the first public release.
+> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives and concurrent dispatcher described below; the built-in durable store, dependency-injection integration, and observability are still part of the work required before the first public release.
 
 ## Why ReliableWebhooks?
 
@@ -18,11 +18,12 @@ ReliableWebhooks addresses those concerns by separating the delivery workflow in
 
 - a stable webhook message identity;
 - a persistence contract for enqueueing, claiming, leasing, retrying, and completing deliveries;
+- a concurrent dispatcher that claims only available capacity and coordinates graceful shutdown;
 - an HTTP transport that performs exactly one request attempt per call;
 - optional HMAC-SHA256 request signing over the exact outbound payload bytes;
 - transport-neutral success, retryable-failure, and permanent-failure outcomes;
 - a retry policy that calculates the next attempt without sleeping or blocking a worker;
-- replaceable abstractions for persistence, signing, classification, and retry behavior.
+- replaceable abstractions for persistence, transport, dispatch timing, signing, classification, and retry behavior.
 
 ## How it works
 
@@ -30,13 +31,13 @@ A ReliableWebhooks delivery is designed around a small state machine rather than
 
 1. Create a `WebhookMessage` with a stable ID, event type, destination, exact payload bytes, content type, and optional headers.
 2. Enqueue it through `IWebhookDeliveryStore`. Duplicate enqueue attempts with the same stable ID are deterministic.
-3. A worker atomically claims due deliveries and receives an expiring `WebhookDeliveryLease`.
-4. `WebhookHttpTransport` performs one HTTP `POST`; when a signer is configured, it signs the exact payload buffer used by the request and adds the delivery identity, event type, timestamp, and signature headers.
+3. `WebhookDispatcher` atomically claims due deliveries up to its available concurrency slots and receives expiring `WebhookDeliveryLease` instances.
+4. `WebhookHttpTransport` performs one HTTP `POST` per claimed delivery; when a signer is configured, it signs the exact payload buffer used by the request and adds the delivery identity, event type, timestamp, and signature headers.
 5. The transport returns a `WebhookDeliveryResult` with a transport-neutral outcome.
-6. Successful and permanent failures can be persisted immediately. Retryable failures are passed to `IWebhookRetryPolicy`, which returns either a future `NextAttemptAt` or a dead-letter decision.
-7. The store records the resulting state so abandoned or failed work can be resumed safely.
+6. Successful and permanent failures are persisted immediately. Retryable failures are passed to `IWebhookRetryPolicy`, which returns either a future `NextAttemptAt` or a dead-letter decision.
+7. The store records the resulting state so abandoned or failed work can be resumed safely. Lease ownership prevents stale workers from overwriting the current owner.
 
-When combined with a durable store and dispatcher, the intended delivery model is **at-least-once**, not exactly-once. Receivers must therefore be idempotent and tolerate duplicate deliveries.
+When combined with a durable store, the intended delivery model is **at-least-once**, not exactly-once. Receivers must therefore be idempotent and tolerate duplicate deliveries.
 
 ## Installation
 
@@ -59,9 +60,6 @@ or:
 The current API exposes the delivery primitives directly. The example below uses the in-memory store only to demonstrate the workflow.
 
 ```csharp
-using System;
-using System.Linq;
-using System.Net.Http;
 using System.Text.Json;
 using ReliableWebhooks;
 
@@ -79,14 +77,7 @@ var message = new WebhookMessage(
     contentType: "application/json");
 
 IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore();
-DateTimeOffset now = DateTimeOffset.UtcNow;
-
-await store.EnqueueAsync(message, now);
-
-WebhookDeliveryLease lease = (await store.ClaimDueAsync(
-    now,
-    leaseDuration: TimeSpan.FromMinutes(1),
-    maxCount: 1)).Single();
+await store.EnqueueAsync(message, DateTimeOffset.UtcNow);
 
 using var handler = new HttpClientHandler
 {
@@ -94,12 +85,25 @@ using var handler = new HttpClientHandler
 };
 
 using var httpClient = new HttpClient(handler);
-var transport = new WebhookHttpTransport(httpClient);
+IWebhookDeliveryTransport transport = new WebhookHttpTransport(httpClient);
+IWebhookRetryPolicy retryPolicy = new DefaultWebhookRetryPolicy();
 
-WebhookDeliveryResult result = await transport.SendAsync(lease.Delivery.Message);
+var dispatcher = new WebhookDispatcher(
+    store,
+    transport,
+    retryPolicy,
+    new WebhookDispatcherOptions
+    {
+        MaxConcurrency = 4,
+        LeaseDuration = TimeSpan.FromMinutes(1),
+        PollInterval = TimeSpan.FromSeconds(1),
+        ShutdownGracePeriod = TimeSpan.FromSeconds(30),
+    });
+
+await dispatcher.RunAsync(stoppingToken);
 ```
 
-The one-minute lease intentionally exceeds the transport's default 30-second attempt timeout, leaving time to persist the result while ownership is still valid. Production workers should size leases beyond their complete attempt budget or renew active leases when processing can run longer.
+`WebhookDispatcher` does not create unbounded work: it claims at most the number of currently available concurrency slots. On shutdown it stops new claims, lets in-flight deliveries finish during the configured grace period, and then cancels remaining attempts. Canceled work is not marked successful; its lease can expire and be reclaimed later.
 
 `InMemoryWebhookDeliveryStore` is process-local and **not durable**. It exists for tests and samples only and must not be used as production persistence.
 
@@ -146,58 +150,14 @@ A receiver can verify a delivery independently by:
 
 Signing secrets are never included in library-generated exception messages or automatic telemetry. Applications should follow the same rule in custom secret providers and signers.
 
-### Handling the result
-
-The transport deliberately does not retry. It reports one attempt and leaves the state transition to the caller or dispatcher.
-
-```csharp
-DateTimeOffset completedAt = DateTimeOffset.UtcNow;
-
-switch (result.Outcome)
-{
-    case WebhookDeliveryOutcome.Success:
-        await store.MarkSucceededAsync(lease, completedAt);
-        break;
-
-    case WebhookDeliveryOutcome.PermanentFailure:
-        await store.MarkPermanentlyFailedAsync(
-            lease,
-            completedAt,
-            lastError: null);
-        break;
-
-    case WebhookDeliveryOutcome.RetryableFailure:
-        var retryPolicy = new DefaultWebhookRetryPolicy();
-        WebhookRetryDecision decision = retryPolicy.GetDecision(
-            WebhookRetryContext.FromResult(
-                lease.Delivery,
-                result,
-                completedAt));
-
-        if (decision.ShouldRetry)
-        {
-            await store.ScheduleRetryAsync(
-                lease,
-                completedAt,
-                decision.NextAttemptAt!.Value,
-                lastError: null);
-        }
-        else
-        {
-            await store.DeadLetterAsync(
-                lease,
-                completedAt,
-                lastError: null);
-        }
-
-        break;
-}
-```
-
 ## Default behavior
 
 | Area | Default |
 | --- | --- |
+| Dispatcher maximum concurrency | 4 |
+| Dispatcher lease duration | 1 minute |
+| Dispatcher poll interval | 1 second |
+| Dispatcher shutdown grace period | 30 seconds |
 | HTTP attempt timeout | 30 seconds |
 | Captured response body | Up to 16 KiB |
 | Success classification | Any `2xx` response |
@@ -223,25 +183,31 @@ ReliableWebhooks is designed around explicit delivery semantics:
 - **At-least-once, not exactly-once.** Duplicate delivery can occur, especially when a worker fails after sending but before persisting the result.
 - **Stable IDs support duplicate-safe enqueueing.** Receivers still need application-level idempotency.
 - **Leases coordinate active ownership.** While a lease is valid, two workers should not own the same delivery simultaneously; expired work can be reclaimed.
+- **Dispatcher concurrency is bounded.** Claims are limited to currently available slots instead of creating unbounded background tasks.
+- **Shutdown is two-phase.** New claims stop first; in-flight work can finish within the grace period before remaining attempts are canceled.
 - **One transport call means one HTTP attempt.** Retry loops are intentionally outside the transport.
 - **Signed payloads use exact request bytes.** Receivers must verify the raw body rather than a parsed/reserialized representation.
 - **Retry policies schedule; they do not wait.** `DefaultWebhookRetryPolicy` returns a future timestamp or dead-letter decision and never calls `Task.Delay`.
 - **Persistence is replaceable.** The core package does not depend on a specific database provider.
 
-The current development version does not yet include the production durable EF Core store, concurrent dispatcher, dependency-injection integration, or observability planned for v0.1.0.
+The current development version does not yet include the production durable EF Core store, dependency-injection/hosted-service integration, or observability planned for v0.1.0.
 
 ## Extensibility
 
 The main behaviors are exposed through public abstractions:
 
 - `IWebhookDeliveryStore` — persistence and lease coordination;
+- `IWebhookDeliveryTransport` — one-attempt delivery transport used by the dispatcher;
+- `IWebhookDispatcherDelay` — replaceable polling/grace-period timing for deterministic tests or custom scheduling;
 - `IWebhookHttpResponseClassifier` — HTTP response classification;
 - `IWebhookRetryPolicy` — retry and dead-letter decisions;
 - `IWebhookRetryJitterSource` — deterministic or custom jitter generation;
 - `IWebhookRequestSigner` — request-signing strategy;
 - `IWebhookSigningSecretProvider` — per-message signing secret resolution.
 
-This keeps persistence, transport behavior, signing, and retry strategy independently replaceable and testable.
+`WebhookDispatcherOptions` also exposes `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod`, and `TimeProvider` so concurrency and timing remain configurable and testable.
+
+This keeps persistence, dispatching, transport behavior, signing, and retry strategy independently replaceable and testable.
 
 ## Support and contribution
 
