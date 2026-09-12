@@ -185,6 +185,95 @@ public sealed class WebhookDispatcherTests
     }
 
     [Fact]
+    public async Task DispatcherRenewsActiveLeaseBeforeOriginalExpiration()
+    {
+        InMemoryWebhookDeliveryStore store = await CreateStoreAsync("renewed");
+        ManualTimeProvider timeProvider = new(Now);
+        BlockingDelay delay = new();
+        BlockingHandler handler = new(expectedStarts: 1);
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(
+            client,
+            options: new WebhookHttpTransportOptions
+            {
+                AttemptTimeout = Timeout.InfiniteTimeSpan,
+            });
+        using CancellationTokenSource shutdown = new();
+        WebhookDispatcher dispatcher = CreateDispatcher(
+            store,
+            transport,
+            delay: delay,
+            leaseDuration: TimeSpan.FromSeconds(10),
+            timeProvider: timeProvider);
+
+        Task run = dispatcher.RunAsync(shutdown.Token);
+        await handler.ExpectedStartsReached.WaitAsync(TestContext.Current.CancellationToken);
+        await timeProvider.WaitForTimerCountAsync(1, TestContext.Current.CancellationToken);
+
+        timeProvider.Advance(TimeSpan.FromSeconds(6));
+
+        await WaitUntilAsync(
+            async () =>
+            {
+                WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+                    "renewed",
+                    TestContext.Current.CancellationToken);
+                return snapshot?.LeaseExpiresAt == Now.AddSeconds(16);
+            });
+
+        IReadOnlyList<WebhookDeliveryLease> reclaimed = await store.ClaimDueAsync(
+            Now.AddSeconds(11),
+            TimeSpan.FromSeconds(10),
+            1,
+            TestContext.Current.CancellationToken);
+
+        Assert.Empty(reclaimed);
+
+        handler.Release();
+        await WaitUntilAsync(
+            async () =>
+            {
+                WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+                    "renewed",
+                    TestContext.Current.CancellationToken);
+                return snapshot?.State == DeliveryState.Succeeded;
+            });
+
+        shutdown.Cancel();
+        await run;
+    }
+
+    [Fact]
+    public async Task DispatcherCancelsInflightAttemptWhenLeaseRenewalFails()
+    {
+        InMemoryWebhookDeliveryStore innerStore = await CreateStoreAsync("lease-lost");
+        FailingRenewalStore store = new(innerStore);
+        BlockingDelay delay = new();
+        BlockingTransport transport = new();
+        using CancellationTokenSource shutdown = new();
+        WebhookDispatcher dispatcher = CreateDispatcher(
+            store,
+            transport,
+            delay: delay,
+            leaseDuration: TimeSpan.FromSeconds(1),
+            timeProvider: TimeProvider.System);
+
+        Task run = dispatcher.RunAsync(shutdown.Token);
+        await transport.Started.WaitAsync(TestContext.Current.CancellationToken);
+
+        await transport.Canceled.WaitAsync(TestContext.Current.CancellationToken);
+        shutdown.Cancel();
+        await run;
+
+        WebhookDeliverySnapshot? snapshot = await innerStore.GetAsync(
+            "lease-lost",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(snapshot);
+        Assert.Equal(DeliveryState.InProgress, snapshot.State);
+        Assert.Equal(1, snapshot.AttemptCount);
+    }
+
+    [Fact]
     public async Task ShutdownAllowsInflightDeliveryToFinishWithinGracePeriod()
     {
         InMemoryWebhookDeliveryStore store = await CreateStoreAsync("graceful");
@@ -304,7 +393,9 @@ public sealed class WebhookDispatcherTests
         IWebhookRetryPolicy? retryPolicy = null,
         IWebhookDispatcherDelay? delay = null,
         int maxConcurrency = 1,
-        TimeSpan? shutdownGracePeriod = null)
+        TimeSpan? shutdownGracePeriod = null,
+        TimeSpan? leaseDuration = null,
+        TimeProvider? timeProvider = null)
     {
         return new WebhookDispatcher(
             store,
@@ -313,10 +404,10 @@ public sealed class WebhookDispatcherTests
             new WebhookDispatcherOptions
             {
                 MaxConcurrency = maxConcurrency,
-                LeaseDuration = TimeSpan.FromMinutes(1),
+                LeaseDuration = leaseDuration ?? TimeSpan.FromMinutes(1),
                 PollInterval = TimeSpan.FromSeconds(5),
                 ShutdownGracePeriod = shutdownGracePeriod ?? TimeSpan.FromSeconds(30),
-                TimeProvider = new FixedTimeProvider(Now),
+                TimeProvider = timeProvider ?? new FixedTimeProvider(Now),
             },
             delay);
     }
@@ -349,6 +440,21 @@ public sealed class WebhookDispatcherTests
         };
     }
 
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(10), TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail("The expected condition was not met.");
+    }
+
     private sealed class FixedTimeProvider : TimeProvider
     {
         private readonly DateTimeOffset now;
@@ -361,6 +467,187 @@ public sealed class WebhookDispatcherTests
         public override DateTimeOffset GetUtcNow()
         {
             return now;
+        }
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        private readonly object gate = new();
+        private readonly List<ManualTimer> timers = [];
+        private TaskCompletionSource timersChanged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private DateTimeOffset now;
+
+        public ManualTimeProvider(DateTimeOffset now)
+        {
+            this.now = now;
+        }
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            lock (gate)
+            {
+                return now;
+            }
+        }
+
+        public override ITimer CreateTimer(
+            TimerCallback callback,
+            object? state,
+            TimeSpan dueTime,
+            TimeSpan period)
+        {
+            ManualTimer timer = new(this, callback, state, dueTime, period);
+            lock (gate)
+            {
+                timers.Add(timer);
+                timersChanged.TrySetResult();
+            }
+
+            return timer;
+        }
+
+        public async Task WaitForTimerCountAsync(
+            int count,
+            CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                Task wait;
+                lock (gate)
+                {
+                    if (timers.Count >= count)
+                    {
+                        return;
+                    }
+
+                    wait = timersChanged.Task;
+                }
+
+                await wait.WaitAsync(cancellationToken);
+
+                lock (gate)
+                {
+                    if (timersChanged.Task.IsCompleted)
+                    {
+                        timersChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    }
+                }
+            }
+        }
+
+        public void Advance(TimeSpan duration)
+        {
+            ManualTimer[] dueTimers;
+
+            lock (gate)
+            {
+                now = now.Add(duration);
+                dueTimers = timers.Where(timer => timer.IsDue(now)).ToArray();
+            }
+
+            foreach (ManualTimer timer in dueTimers)
+            {
+                timer.Fire();
+            }
+        }
+
+        private void Remove(ManualTimer timer)
+        {
+            lock (gate)
+            {
+                _ = timers.Remove(timer);
+            }
+        }
+
+        private sealed class ManualTimer : ITimer
+        {
+            private readonly ManualTimeProvider owner;
+            private readonly TimerCallback callback;
+            private readonly object? state;
+            private readonly object gate = new();
+            private DateTimeOffset dueAt;
+            private TimeSpan period;
+            private bool disposed;
+
+            internal ManualTimer(
+                ManualTimeProvider owner,
+                TimerCallback callback,
+                object? state,
+                TimeSpan dueTime,
+                TimeSpan period)
+            {
+                this.owner = owner;
+                this.callback = callback;
+                this.state = state;
+                this.period = period;
+                dueAt = dueTime == Timeout.InfiniteTimeSpan
+                    ? DateTimeOffset.MaxValue
+                    : owner.GetUtcNow().Add(dueTime);
+            }
+
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                lock (gate)
+                {
+                    if (disposed)
+                    {
+                        return false;
+                    }
+
+                    this.period = period;
+                    dueAt = dueTime == Timeout.InfiniteTimeSpan
+                        ? DateTimeOffset.MaxValue
+                        : owner.GetUtcNow().Add(dueTime);
+                    return true;
+                }
+            }
+
+            public void Dispose()
+            {
+                lock (gate)
+                {
+                    disposed = true;
+                }
+
+                owner.Remove(this);
+            }
+
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+
+            internal bool IsDue(DateTimeOffset now)
+            {
+                lock (gate)
+                {
+                    return !disposed && dueAt <= now;
+                }
+            }
+
+            internal void Fire()
+            {
+                bool shouldFire;
+
+                lock (gate)
+                {
+                    if (disposed || dueAt == DateTimeOffset.MaxValue)
+                    {
+                        return;
+                    }
+
+                    dueAt = period > TimeSpan.Zero && period != Timeout.InfiniteTimeSpan
+                        ? owner.GetUtcNow().Add(period)
+                        : DateTimeOffset.MaxValue;
+                    shouldFire = true;
+                }
+
+                if (shouldFire)
+                {
+                    callback(state);
+                }
+            }
         }
     }
 
@@ -446,6 +733,41 @@ public sealed class WebhookDispatcherTests
         }
     }
 
+    private sealed class BlockingTransport : IWebhookDeliveryTransport
+    {
+        private readonly TaskCompletionSource started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource canceled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Started => started.Task;
+
+        public Task Canceled => canceled.Task;
+
+        public void Release()
+        {
+            release.TrySetResult();
+        }
+
+        public async Task<WebhookDeliveryResult> SendAsync(
+            WebhookMessage message,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            started.TrySetResult();
+
+            try
+            {
+                await release.Task.WaitAsync(cancellationToken);
+                throw new InvalidOperationException("The blocking transport was released unexpectedly.");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                canceled.TrySetResult();
+                throw;
+            }
+        }
+    }
+
     private sealed class BlockingHandler : HttpMessageHandler
     {
         private readonly int expectedStarts;
@@ -510,6 +832,85 @@ public sealed class WebhookDispatcherTests
 
                 observed = previous;
             }
+        }
+    }
+
+    private sealed class FailingRenewalStore : IWebhookDeliveryStore
+    {
+        private readonly IWebhookDeliveryStore innerStore;
+
+        internal FailingRenewalStore(IWebhookDeliveryStore innerStore)
+        {
+            this.innerStore = innerStore;
+        }
+
+        public Task<WebhookEnqueueResult> EnqueueAsync(
+            WebhookMessage message,
+            DateTimeOffset nextAttemptAt,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.EnqueueAsync(message, nextAttemptAt, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<WebhookDeliveryLease>> ClaimDueAsync(
+            DateTimeOffset now,
+            TimeSpan leaseDuration,
+            int maxCount,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.ClaimDueAsync(now, leaseDuration, maxCount, cancellationToken);
+        }
+
+        public Task<WebhookDeliveryLease> RenewLeaseAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset now,
+            TimeSpan leaseDuration,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("renewal failed");
+        }
+
+        public Task MarkSucceededAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.MarkSucceededAsync(lease, completedAt, cancellationToken);
+        }
+
+        public Task ScheduleRetryAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            DateTimeOffset nextAttemptAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.ScheduleRetryAsync(lease, completedAt, nextAttemptAt, lastError, cancellationToken);
+        }
+
+        public Task MarkPermanentlyFailedAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.MarkPermanentlyFailedAsync(lease, completedAt, lastError, cancellationToken);
+        }
+
+        public Task DeadLetterAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.DeadLetterAsync(lease, completedAt, lastError, cancellationToken);
+        }
+
+        public Task<WebhookDeliverySnapshot?> GetAsync(
+            string webhookId,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.GetAsync(webhookId, cancellationToken);
         }
     }
 }

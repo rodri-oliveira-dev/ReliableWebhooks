@@ -206,6 +206,8 @@ Permanent failures transition directly to `PermanentlyFailed` and are not retrie
 
 A claim creates a lease. The lease token is proof of active ownership. State transitions must succeed only for the current, unexpired token. If a worker loses ownership because the lease expires and another worker reclaims the record, the stale worker must not overwrite the new owner's state.
 
+While a delivery attempt is running, `WebhookDispatcher` renews the active lease every half `LeaseDuration`, capped at a 30-second renewal interval. Renewal keeps the same lease token and does not increment the attempt count. If renewal loses ownership or fails, the dispatcher cancels the in-flight attempt when possible and leaves the delivery for the current owner or future recovery instead of persisting a stale outcome.
+
 Shutdown is two-phase:
 
 1. stop claiming new work;
@@ -345,7 +347,7 @@ Invalid options fail during host startup with actionable validation messages.
 
 Start with the defaults, then tune from observed latency and backlog rather than maximizing concurrency blindly.
 
-- Set `LeaseDuration` comfortably above the expected request attempt duration, including network variance.
+- Set `LeaseDuration` high enough for the backing store and network to renew comfortably; active attempts renew at half the lease duration, capped at 30 seconds.
 - Keep `AttemptTimeout` bounded unless another cancellation mechanism is guaranteed.
 - Increase `MaxConcurrency` only when the backing store, outbound network, and receivers can sustain it.
 - Keep event types to a bounded vocabulary because event type is used as a metric dimension.

@@ -15,6 +15,8 @@ namespace ReliableWebhooks;
 /// </remarks>
 public sealed class WebhookDispatcher
 {
+    private static readonly TimeSpan MaximumLeaseRenewalDelay = TimeSpan.FromSeconds(30);
+
     private const string SuccessOutcome = "success";
     private const string RetryOutcome = "retry_scheduled";
     private const string PermanentFailureOutcome = "permanent_failure";
@@ -208,6 +210,10 @@ public sealed class WebhookDispatcher
         int attempt = lease.Delivery.AttemptCount;
         string outcome = UnexpectedFailureOutcome;
         long startedAt = Stopwatch.GetTimestamp();
+        ActiveLease activeLease = new(lease);
+        using CancellationTokenSource ownershipCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task renewal = RenewLeaseUntilStoppedAsync(activeLease, ownershipCancellation);
 
         using Activity? activity = ReliableWebhooksInstrumentation.ActivitySource.StartActivity(
             ReliableWebhooksInstrumentation.DeliveryAttemptActivityName,
@@ -225,10 +231,12 @@ public sealed class WebhookDispatcher
         {
             WebhookDeliveryResult result = await transport.SendAsync(
                 message,
-                cancellationToken).ConfigureAwait(false);
+                ownershipCancellation.Token).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
+            ownershipCancellation.Token.ThrowIfCancellationRequested();
             DateTimeOffset completedAt = timeProvider.GetUtcNow();
+            WebhookDeliveryLease currentLease = activeLease.Get();
 
             if (result.StatusCode is int statusCode)
             {
@@ -239,7 +247,7 @@ public sealed class WebhookDispatcher
             {
                 case WebhookDeliveryOutcome.Success:
                     await store.MarkSucceededAsync(
-                        lease,
+                        currentLease,
                         completedAt,
                         cancellationToken).ConfigureAwait(false);
                     outcome = SuccessOutcome;
@@ -250,7 +258,7 @@ public sealed class WebhookDispatcher
 
                 case WebhookDeliveryOutcome.PermanentFailure:
                     await store.MarkPermanentlyFailedAsync(
-                        lease,
+                        currentLease,
                         completedAt,
                         DescribeFailure(result),
                         cancellationToken).ConfigureAwait(false);
@@ -262,7 +270,7 @@ public sealed class WebhookDispatcher
 
                 case WebhookDeliveryOutcome.RetryableFailure:
                     outcome = await PersistRetryableFailureAsync(
-                        lease,
+                        currentLease,
                         result,
                         completedAt,
                         cancellationToken).ConfigureAwait(false);
@@ -278,6 +286,12 @@ public sealed class WebhookDispatcher
             outcome = CanceledOutcome;
             ReliableWebhooksLog.AttemptCanceled(logger, message.Id, message.EventType, attempt);
             // Cancellation intentionally leaves the lease in progress so it can expire and be reclaimed safely.
+        }
+        catch (OperationCanceledException) when (ownershipCancellation.IsCancellationRequested)
+        {
+            outcome = LeaseLostOutcome;
+            ReliableWebhooksLog.LeaseOwnershipLost(logger, message.Id, message.EventType, attempt);
+            // Renewal lost ownership or could no longer prove ownership; do not persist a stale result.
         }
         catch (WebhookDeliveryStoreConcurrencyException)
         {
@@ -301,6 +315,9 @@ public sealed class WebhookDispatcher
         }
         finally
         {
+            ownershipCancellation.Cancel();
+            await renewal.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
             activity?.SetTag(ReliableWebhooksInstrumentation.OutcomeTagName, outcome);
             TagList durationTags = CreateEventTypeTags(message.EventType);
             durationTags.Add(ReliableWebhooksInstrumentation.OutcomeTagName, outcome);
@@ -308,6 +325,61 @@ public sealed class WebhookDispatcher
                 Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
                 durationTags);
         }
+    }
+
+    private async Task RenewLeaseUntilStoppedAsync(
+        ActiveLease activeLease,
+        CancellationTokenSource ownershipCancellation)
+    {
+        TimeSpan renewalDelay = CalculateLeaseRenewalDelay(leaseDuration);
+        WebhookDeliveryLease lease = activeLease.Get();
+        WebhookMessage message = lease.Delivery.Message;
+        int attempt = lease.Delivery.AttemptCount;
+
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(
+                    renewalDelay,
+                    timeProvider,
+                    ownershipCancellation.Token).ConfigureAwait(false);
+
+                WebhookDeliveryLease renewed = await store.RenewLeaseAsync(
+                    activeLease.Get(),
+                    timeProvider.GetUtcNow(),
+                    leaseDuration,
+                    ownershipCancellation.Token).ConfigureAwait(false);
+                activeLease.Set(renewed);
+            }
+        }
+        catch (OperationCanceledException) when (ownershipCancellation.IsCancellationRequested)
+        {
+            // Normal completion path when the attempt finishes or shutdown cancels in-flight work.
+        }
+        catch (WebhookDeliveryStoreConcurrencyException)
+        {
+            ReliableWebhooksLog.LeaseOwnershipLost(logger, message.Id, message.EventType, attempt);
+            ownershipCancellation.Cancel();
+        }
+        catch (Exception exception)
+        {
+            string exceptionType = exception.GetType().FullName ?? exception.GetType().Name;
+            ReliableWebhooksLog.LeaseRenewalFailed(
+                logger,
+                message.Id,
+                message.EventType,
+                attempt,
+                exceptionType);
+            ownershipCancellation.Cancel();
+        }
+    }
+
+    private static TimeSpan CalculateLeaseRenewalDelay(TimeSpan leaseDuration)
+    {
+        long halfLeaseTicks = Math.Max(1, leaseDuration.Ticks / 2);
+        long renewalTicks = Math.Min(halfLeaseTicks, MaximumLeaseRenewalDelay.Ticks);
+        return TimeSpan.FromTicks(renewalTicks);
     }
 
     private async Task<string> PersistRetryableFailureAsync(
@@ -467,6 +539,33 @@ public sealed class WebhookDispatcher
         public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken = default)
         {
             return Task.Delay(delay, timeProvider, cancellationToken);
+        }
+    }
+
+    private sealed class ActiveLease
+    {
+        private readonly object gate = new();
+        private WebhookDeliveryLease lease;
+
+        internal ActiveLease(WebhookDeliveryLease lease)
+        {
+            this.lease = lease;
+        }
+
+        internal WebhookDeliveryLease Get()
+        {
+            lock (gate)
+            {
+                return lease;
+            }
+        }
+
+        internal void Set(WebhookDeliveryLease renewedLease)
+        {
+            lock (gate)
+            {
+                lease = renewedLease;
+            }
         }
     }
 }

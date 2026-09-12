@@ -52,7 +52,11 @@ The concrete atomicity mechanism is intentionally left to the adapter. Transacti
 
 ## Lease renewal and stale ownership
 
-`RenewLeaseAsync` must preserve the same lease token, must not increment `AttemptCount`, and must not shorten the currently valid lease.
+`WebhookDispatcher` renews an in-flight delivery lease while the transport attempt is still running. The renewal cadence is one half of `Dispatcher.LeaseDuration`, capped at 30 seconds, so renewal normally happens with a safety margin instead of waiting for the expiration boundary.
+
+`RenewLeaseAsync` must preserve the same lease token, must not increment `AttemptCount`, and must not shorten the currently valid lease. The returned `WebhookDeliveryLease` should reflect the current persisted expiration so callers can use the latest ownership snapshot for the final state transition.
+
+If renewal fails because ownership is stale, replaced, expired, or otherwise invalid, the dispatcher cancels the in-flight attempt when possible and does not persist success, retry, permanent-failure, or dead-letter state for that stale owner.
 
 Every state-changing operation that accepts a `WebhookDeliveryLease` must verify that:
 
