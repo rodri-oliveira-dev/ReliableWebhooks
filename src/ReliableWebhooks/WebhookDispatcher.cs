@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace ReliableWebhooks;
 
 /// <summary>
@@ -65,12 +67,17 @@ public sealed class WebhookDispatcher
     {
         HashSet<Task> inFlight = [];
         using CancellationTokenSource attemptCancellation = new();
+        ExceptionDispatchInfo? failure = null;
 
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await ObserveCompletedAsync(inFlight).ConfigureAwait(false);
+                Exception? completedFailure = await ObserveCompletedAsync(inFlight).ConfigureAwait(false);
+                if (completedFailure is not null)
+                {
+                    throw completedFailure;
+                }
 
                 int availableSlots = maxConcurrency - inFlight.Count;
                 if (availableSlots == 0)
@@ -100,10 +107,20 @@ public sealed class WebhookDispatcher
         {
             // Requested shutdown stops polling and moves to the graceful drain below.
         }
+        catch (Exception exception)
+        {
+            failure = ExceptionDispatchInfo.Capture(exception);
+        }
         finally
         {
-            await DrainAsync(inFlight, attemptCancellation).ConfigureAwait(false);
+            Exception? drainFailure = await DrainAsync(inFlight, attemptCancellation).ConfigureAwait(false);
+            if (failure is null && drainFailure is not null)
+            {
+                failure = ExceptionDispatchInfo.Capture(drainFailure);
+            }
         }
+
+        failure?.Throw();
     }
 
     private static void ValidateOptions(WebhookDispatcherOptions options)
@@ -223,72 +240,86 @@ public sealed class WebhookDispatcher
             cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task DrainAsync(
+    private async Task<Exception?> DrainAsync(
         HashSet<Task> inFlight,
         CancellationTokenSource attemptCancellation)
     {
-        await ObserveCompletedAsync(inFlight).ConfigureAwait(false);
         if (inFlight.Count == 0)
         {
-            return;
+            return null;
         }
+
+        Task allInFlight = Task.WhenAll(inFlight);
 
         if (shutdownGracePeriod > TimeSpan.Zero)
         {
             using CancellationTokenSource graceCancellation = new();
-            Task allInFlight = Task.WhenAll(inFlight);
             Task grace = delay.DelayAsync(shutdownGracePeriod, graceCancellation.Token);
             Task completed = await Task.WhenAny(allInFlight, grace).ConfigureAwait(false);
 
             if (completed == allInFlight)
             {
                 graceCancellation.Cancel();
-                await ObserveCanceledDelayAsync(grace, graceCancellation.Token).ConfigureAwait(false);
-                await allInFlight.ConfigureAwait(false);
+                await grace.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                await allInFlight.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
                 inFlight.Clear();
-                return;
+                return GetTaskFailure(allInFlight);
             }
 
-            await grace.ConfigureAwait(false);
+            await grace.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            Exception? graceFailure = GetTaskFailure(grace);
+
+            attemptCancellation.Cancel();
+            await allInFlight.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            inFlight.Clear();
+
+            return graceFailure ?? GetTaskFailure(allInFlight);
         }
 
         attemptCancellation.Cancel();
-        await Task.WhenAll(inFlight).ConfigureAwait(false);
+        await allInFlight.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         inFlight.Clear();
+        return GetTaskFailure(allInFlight);
     }
 
-    private static async Task ObserveCanceledDelayAsync(Task delayTask, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await delayTask.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-    }
-
-    private static async Task ObserveCompletedAsync(HashSet<Task> inFlight)
+    private static async Task<Exception?> ObserveCompletedAsync(HashSet<Task> inFlight)
     {
         if (inFlight.Count == 0)
         {
-            return;
+            return null;
         }
 
+        Exception? failure = null;
         Task[] completed = inFlight.Where(task => task.IsCompleted).ToArray();
         foreach (Task task in completed)
         {
             _ = inFlight.Remove(task);
-            await task.ConfigureAwait(false);
+            await task.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            failure ??= GetTaskFailure(task);
         }
+
+        return failure;
     }
 
     private static async Task WaitForAnyAsync(
         HashSet<Task> inFlight,
         CancellationToken cancellationToken)
     {
-        Task completed = await Task.WhenAny(inFlight).WaitAsync(cancellationToken).ConfigureAwait(false);
-        await completed.ConfigureAwait(false);
+        _ = await Task.WhenAny(inFlight).WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Exception? GetTaskFailure(Task task)
+    {
+        if (task.IsFaulted)
+        {
+            return task.Exception.InnerExceptions.Count == 1
+                ? task.Exception.InnerException
+                : task.Exception;
+        }
+
+        return task.IsCanceled
+            ? new TaskCanceledException(task)
+            : null;
     }
 
     private static string? DescribeFailure(WebhookDeliveryResult result)
