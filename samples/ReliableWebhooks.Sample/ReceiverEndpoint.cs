@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 
 namespace ReliableWebhooks.Sample;
@@ -24,8 +25,16 @@ internal static class ReceiverEndpoint
             return Results.Unauthorized();
         }
 
-        string webhookId = request.Headers["X-Webhook-Id"].ToString();
-        int receiverAttempt = receiverState.RegisterAttempt(webhookId);
+        string headerWebhookId = request.Headers["X-Webhook-Id"].ToString();
+        string? signedWebhookId = GetSignedWebhookId(payload);
+
+        if (signedWebhookId is null
+            || !string.Equals(headerWebhookId, signedWebhookId, StringComparison.Ordinal))
+        {
+            return Results.BadRequest();
+        }
+
+        int receiverAttempt = receiverState.RegisterAttempt(signedWebhookId);
 
         return behavior switch
         {
@@ -98,6 +107,21 @@ internal static class ReceiverEndpoint
         finally
         {
             CryptographicOperations.ZeroMemory(key);
+        }
+    }
+
+    private static string? GetSignedWebhookId(ReadOnlySpan<byte> payload)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(payload);
+            return document.RootElement.TryGetProperty("WebhookId", out JsonElement webhookId)
+                ? webhookId.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 
