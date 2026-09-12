@@ -196,7 +196,7 @@
       "Microsoft.TestPlatform.TestHost": {
         "type": "Transitive",
         "resolved": "18.9.0",
-        "contentHash": "Oq+Pma/J86aZL72t71bcESvDszDsTjUfl6PIsuDdPoKTHWZfNMhKamCfLD5fKx51W/u0KozXtJo2/3fnt0sgPxg==",
+        "contentHash": "Oq+Pma/J86aZL72t71bcESvDszDsTjUfl6PIsuDdPoKTHZfNMhKamCfLD5fKx51W/u0KozXtJo2/3fnt0sgPxg==",
         "dependencies": {
           "Microsoft.TestPlatform.ObjectModel": "18.9.0"
         }
