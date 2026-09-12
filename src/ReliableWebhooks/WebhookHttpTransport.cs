@@ -27,6 +27,28 @@ public sealed class WebhookHttpTransport
     private readonly WebhookSigningOptions signingOptions;
 
     /// <summary>
+    /// Initializes a new instance of the <see cref="WebhookHttpTransport"/> class without request signing.
+    /// </summary>
+    /// <param name="httpClient">
+    /// The HTTP client used to send webhook requests. Its primary handler must have automatic redirects disabled.
+    /// </param>
+    /// <param name="classifier">An optional classifier that overrides the default HTTP status classification.</param>
+    /// <param name="options">Optional transport settings.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="httpClient"/> is <see langword="null"/>, or signing options contain a null time provider.
+    /// </exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The configured timeout is invalid or the response-body byte limit is negative.
+    /// </exception>
+    public WebhookHttpTransport(
+        HttpClient httpClient,
+        IWebhookHttpResponseClassifier? classifier = null,
+        WebhookHttpTransportOptions? options = null)
+        : this(httpClient, classifier, options, signer: null)
+    {
+    }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="WebhookHttpTransport"/> class.
     /// </summary>
     /// <param name="httpClient">
@@ -105,12 +127,15 @@ public sealed class WebhookHttpTransport
         cancellationToken.ThrowIfCancellationRequested();
 
         byte[] payload = message.Payload.ToArray();
-        using HttpRequestMessage request = await CreateRequestAsync(message, payload, cancellationToken).ConfigureAwait(false);
         using CancellationTokenSource? timeoutSource = CreateTimeoutSource(cancellationToken);
         CancellationToken attemptToken = timeoutSource?.Token ?? cancellationToken;
 
         try
         {
+            using HttpRequestMessage request = await CreateRequestAsync(
+                message,
+                payload,
+                attemptToken).ConfigureAwait(false);
             using HttpResponseMessage response = await httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead,
