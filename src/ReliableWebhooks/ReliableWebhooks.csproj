@@ -10,10 +10,13 @@
     <Title>ReliableWebhooks</Title>
     <Authors>Rodrigo de Oliveira</Authors>
     <Description>
-      Reliable outbound webhook delivery primitives for .NET 10 with explicit delivery outcomes and extensible transport behavior.
+      Reliable outbound webhook delivery for .NET 10 with pluggable durable persistence, retries, leases, HMAC signing, observability, and DI/hosting integration.
     </Description>
-    <PackageTags>dotnet;csharp;library;net10;nuget;webhooks;http;reliability</PackageTags>
+    <PackageTags>dotnet;csharp;library;net10;nuget;webhooks;outbound-webhooks;http;reliability;retry;hmac;observability</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageProjectUrl>https://github.com/rodri-oliveira-dev/ReliableWebhooks</PackageProjectUrl>
+    <Copyright>Copyright (c) 2026 Rodrigo de Oliveira and contributors</Copyright>
 
     <!-- NuGet presentation -->
     <PackageReadmeFile>README.md</PackageReadmeFile>
@@ -21,6 +24,7 @@
 
     <!-- Repository -->
     <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/rodri-oliveira-dev/ReliableWebhooks</RepositoryUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
 
     <!-- Documentation and symbols -->
