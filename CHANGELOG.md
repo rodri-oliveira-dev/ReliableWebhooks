@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - HMAC-SHA256 webhook request signing over the exact outbound payload bytes and a Unix timestamp, with replaceable signer/secret-provider abstractions and configurable delivery header names.
 - Concurrent webhook dispatcher with bounded parallelism, atomic lease-based claims, persisted success/retry/permanent/dead-letter transitions, controllable polling, and graceful shutdown for in-flight attempts.
 - Backend-neutral observability with structured logging, `ActivitySource` tracing, `Meter` metrics, stable public instrumentation names, and an `InstrumentedWebhookDeliveryStore` decorator for enqueue telemetry across custom stores.
+- Microsoft dependency-injection integration with validated options, `IHttpClientFactory`, an application-facing enqueue service, replaceable default abstractions, and optional hosted dispatcher execution.
 - Primary GitHub Actions CI workflow with locked restore, formatting verification, Release build, tests, coverage, NuGet packaging, package validation, symbols, Source Link validation, and downloadable artifacts.
 - CodeQL security analysis for C#.
 - Dependency Review for pull requests.
