@@ -34,6 +34,21 @@ public sealed class WebhookHttpTransportOptions
     } = 16 * 1024;
 
     /// <summary>
+    /// Gets the optional policy used to authorize destinations before an outbound request is sent.
+    /// </summary>
+    /// <remarks>
+    /// The default is <see langword="null"/>, which treats destinations as operator-trusted after the
+    /// URI-shape validation performed by <see cref="WebhookMessage"/>. Applications that accept tenant or
+    /// otherwise untrusted webhook URLs should configure a policy such as
+    /// <see cref="PublicNetworkWebhookDestinationPolicy"/>.
+    /// </remarks>
+    public IWebhookDestinationPolicy? DestinationPolicy
+    {
+        get;
+        init;
+    }
+
+    /// <summary>
     /// Gets the header names and time source used when a request signer is configured.
     /// </summary>
     public WebhookSigningOptions Signing

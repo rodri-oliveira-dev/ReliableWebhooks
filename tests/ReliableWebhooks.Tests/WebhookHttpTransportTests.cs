@@ -140,6 +140,29 @@ public sealed class WebhookHttpTransportTests
     }
 
     [Fact]
+    public async Task SendAsyncReturnsPermanentFailureWithoutSendingWhenDestinationPolicyDenies()
+    {
+        DelegateHandler handler = new(
+            static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(
+            client,
+            options: new WebhookHttpTransportOptions
+            {
+                DestinationPolicy = new DenyAllDestinationPolicy(),
+            });
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.PermanentFailure, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.DestinationPolicyDenied, result.FailureKind);
+        Assert.Null(result.StatusCode);
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
     public async Task SendAsyncBoundsCapturedResponseBody()
     {
         byte[] responseBody = [1, 2, 3, 4, 5, 6];
@@ -220,6 +243,16 @@ public sealed class WebhookHttpTransportTests
             return statusCode == 409
                 ? WebhookDeliveryOutcome.RetryableFailure
                 : new DefaultWebhookHttpResponseClassifier().Classify(statusCode);
+        }
+    }
+
+    private sealed class DenyAllDestinationPolicy : IWebhookDestinationPolicy
+    {
+        public ValueTask<WebhookDestinationPolicyResult> AuthorizeAsync(
+            Uri destination,
+            CancellationToken cancellationToken = default)
+        {
+            return ValueTask.FromResult(WebhookDestinationPolicyResult.Deny());
         }
     }
 

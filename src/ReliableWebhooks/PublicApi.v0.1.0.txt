@@ -18,6 +18,7 @@ F:public static literal ReliableWebhooks.WebhookEnqueueStatus ReliableWebhooks.W
 F:public static literal ReliableWebhooks.WebhookEnqueueStatus ReliableWebhooks.WebhookEnqueueStatus.Enqueued value=0
 F:public static literal ReliableWebhooks.WebhookRetryAction ReliableWebhooks.WebhookRetryAction.DeadLetter value=1
 F:public static literal ReliableWebhooks.WebhookRetryAction ReliableWebhooks.WebhookRetryAction.Retry value=0
+F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.DestinationPolicyDenied value=3
 F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.Network value=1
 F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.None value=0
 F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.Timeout value=2
@@ -45,6 +46,7 @@ M:public instance abstract newslot calling=Standard, HasThis System.Threading.Ta
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.Task`1<ReliableWebhooks.WebhookEnqueueResult> nullable=notnull<notnull> ReliableWebhooks.IWebhookDeliveryStore.EnqueueAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.DateTimeOffset,System.Threading.CancellationToken optional default=null)
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.Task`1<ReliableWebhooks.WebhookEnqueueResult> nullable=notnull<notnull> ReliableWebhooks.IWebhookEnqueueService.EnqueueAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.Threading.CancellationToken optional default=null)
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.Task`1<System.Collections.Generic.IReadOnlyList`1<ReliableWebhooks.WebhookDeliveryLease>> nullable=notnull<notnull<notnull>> ReliableWebhooks.IWebhookDeliveryStore.ClaimDueAsync(System.DateTimeOffset,System.TimeSpan,System.Int32,System.Threading.CancellationToken optional default=null)
+M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<ReliableWebhooks.WebhookDestinationPolicyResult> nullable=notnull<notnull> ReliableWebhooks.IWebhookDestinationPolicy.AuthorizeAsync(System.Uri nullable=notnull,System.Threading.CancellationToken optional default=null)
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<System.ReadOnlyMemory`1<System.Byte>> ReliableWebhooks.IWebhookSigningSecretProvider.GetSecretAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.Threading.CancellationToken optional default=null)
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<System.String> nullable=notnull<notnull> ReliableWebhooks.IWebhookRequestSigner.SignAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.ReadOnlyMemory`1<System.Byte>,System.DateTimeOffset,System.Threading.CancellationToken optional default=null)
 M:public instance calling=Standard, HasThis ReliableWebhooks.ReliableWebhooksBuilder nullable=notnull ReliableWebhooks.ReliableWebhooksBuilder.AddHostedDispatcher()
@@ -57,9 +59,11 @@ M:public instance specialname calling=Standard, HasThis ReliableWebhooks.Deliver
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.DeliveryState ReliableWebhooks.WebhookDelivery.get_State()
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.DeliveryState ReliableWebhooks.WebhookDeliverySnapshot.get_State()
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.HmacSha256WebhookRequestSigner..ctor(ReliableWebhooks.IWebhookSigningSecretProvider nullable=notnull)
+M:public instance specialname calling=Standard, HasThis ReliableWebhooks.IWebhookDestinationPolicy nullable=nullable ReliableWebhooks.WebhookHttpTransportOptions.get_DestinationPolicy()
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.InMemoryWebhookDeliveryStore..ctor()
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.InstrumentedWebhookDeliveryStore..ctor(ReliableWebhooks.IWebhookDeliveryStore nullable=notnull)
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.InstrumentedWebhookDeliveryStore..ctor(ReliableWebhooks.IWebhookDeliveryStore nullable=notnull,Microsoft.Extensions.Logging.ILogger nullable=notnull)
+M:public instance specialname calling=Standard, HasThis ReliableWebhooks.PublicNetworkWebhookDestinationPolicy..ctor(System.Collections.Generic.IEnumerable`1<System.String> nullable=nullable<notnull> optional default=null)
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.ReliableWebhooksOptions..ctor()
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookDelivery..ctor(ReliableWebhooks.WebhookMessage nullable=notnull,ReliableWebhooks.DeliveryState optional default=Pending,System.Collections.Generic.IEnumerable`1<ReliableWebhooks.DeliveryAttempt> nullable=nullable<notnull> optional default=null)
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookDeliveryLease..ctor(ReliableWebhooks.WebhookDeliverySnapshot nullable=notnull,System.Guid,System.DateTimeOffset)
@@ -91,6 +95,7 @@ M:public instance specialname calling=Standard, HasThis ReliableWebhooks.Webhook
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookDeliveryResult.get_FailureKind()
 M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookDeliveryResult.get_ResponseBodyTruncated()
 M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookDeliverySnapshot.get_IsTerminal()
+M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookDestinationPolicyResult.get_IsAllowed()
 M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookEnqueueResult.get_WasEnqueued()
 M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookRetryDecision.get_ShouldRetry()
 M:public instance specialname calling=Standard, HasThis System.Collections.Generic.IReadOnlyDictionary`2<System.String,System.String> nullable=notnull<notnull,notnull> ReliableWebhooks.WebhookMessage.get_Headers()
@@ -144,6 +149,7 @@ M:public instance specialname calling=Standard, HasThis System.Void ReliableWebh
 M:public instance specialname calling=Standard, HasThis System.Void ReliableWebhooks.WebhookDispatcherOptions.set_ShutdownGracePeriod(System.TimeSpan)
 M:public instance specialname calling=Standard, HasThis System.Void ReliableWebhooks.WebhookDispatcherOptions.set_TimeProvider(System.TimeProvider nullable=notnull)
 M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookHttpTransportOptions.set_AttemptTimeout(System.TimeSpan)
+M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookHttpTransportOptions.set_DestinationPolicy(ReliableWebhooks.IWebhookDestinationPolicy nullable=nullable)
 M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookHttpTransportOptions.set_MaxResponseBodyBytes(System.Int32)
 M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookHttpTransportOptions.set_Signing(ReliableWebhooks.WebhookSigningOptions nullable=notnull)
 M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookRetryPolicyOptions.set_BaseDelay(System.TimeSpan)
@@ -174,13 +180,17 @@ M:public instance virtual final newslot calling=Standard, HasThis System.Threadi
 M:public instance virtual final newslot calling=Standard, HasThis System.Threading.Tasks.Task`1<ReliableWebhooks.WebhookEnqueueResult> nullable=notnull<notnull> ReliableWebhooks.InstrumentedWebhookDeliveryStore.EnqueueAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.DateTimeOffset,System.Threading.CancellationToken optional default=null)
 M:public instance virtual final newslot calling=Standard, HasThis System.Threading.Tasks.Task`1<System.Collections.Generic.IReadOnlyList`1<ReliableWebhooks.WebhookDeliveryLease>> nullable=notnull<notnull<notnull>> ReliableWebhooks.InMemoryWebhookDeliveryStore.ClaimDueAsync(System.DateTimeOffset,System.TimeSpan,System.Int32,System.Threading.CancellationToken optional default=null)
 M:public instance virtual final newslot calling=Standard, HasThis System.Threading.Tasks.Task`1<System.Collections.Generic.IReadOnlyList`1<ReliableWebhooks.WebhookDeliveryLease>> nullable=notnull<notnull<notnull>> ReliableWebhooks.InstrumentedWebhookDeliveryStore.ClaimDueAsync(System.DateTimeOffset,System.TimeSpan,System.Int32,System.Threading.CancellationToken optional default=null)
+M:public instance virtual final newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<ReliableWebhooks.WebhookDestinationPolicyResult> nullable=notnull<notnull> ReliableWebhooks.PublicNetworkWebhookDestinationPolicy.AuthorizeAsync(System.Uri nullable=notnull,System.Threading.CancellationToken optional default=null)
 M:public instance virtual final newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<System.String> nullable=notnull<notnull> ReliableWebhooks.HmacSha256WebhookRequestSigner.SignAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.ReadOnlyMemory`1<System.Byte>,System.DateTimeOffset,System.Threading.CancellationToken optional default=null)
 M:public static calling=Standard ReliableWebhooks.ReliableWebhooksBuilder nullable=notnull ReliableWebhooks.ReliableWebhooksServiceCollectionExtensions.AddReliableWebhooks(Microsoft.Extensions.DependencyInjection.IServiceCollection nullable=notnull,System.Action`1<ReliableWebhooks.ReliableWebhooksOptions> nullable=nullable<notnull> optional default=null)
+M:public static calling=Standard ReliableWebhooks.WebhookDestinationPolicyResult nullable=notnull ReliableWebhooks.WebhookDestinationPolicyResult.Allow()
+M:public static calling=Standard ReliableWebhooks.WebhookDestinationPolicyResult nullable=notnull ReliableWebhooks.WebhookDestinationPolicyResult.Deny()
 M:public static calling=Standard ReliableWebhooks.WebhookRetryContext nullable=notnull ReliableWebhooks.WebhookRetryContext.FromResult(ReliableWebhooks.WebhookDeliverySnapshot nullable=notnull,ReliableWebhooks.WebhookDeliveryResult nullable=notnull,System.DateTimeOffset)
 P:Microsoft.Extensions.DependencyInjection.IHttpClientBuilder nullable=notnull ReliableWebhooks.ReliableWebhooksBuilder.HttpClientBuilder[] accessors=[get:public:instance]
 P:Microsoft.Extensions.DependencyInjection.IServiceCollection nullable=notnull ReliableWebhooks.ReliableWebhooksBuilder.Services[] accessors=[get:public:instance]
 P:ReliableWebhooks.DeliveryState ReliableWebhooks.WebhookDelivery.State[] accessors=[get:public:instance]
 P:ReliableWebhooks.DeliveryState ReliableWebhooks.WebhookDeliverySnapshot.State[] accessors=[get:public:instance]
+P:ReliableWebhooks.IWebhookDestinationPolicy nullable=nullable ReliableWebhooks.WebhookHttpTransportOptions.DestinationPolicy[] accessors=[get:public:instance,set:public:instance]
 P:ReliableWebhooks.WebhookDeliveryOutcome ReliableWebhooks.WebhookDeliveryResult.Outcome[] accessors=[get:public:instance]
 P:ReliableWebhooks.WebhookDeliverySnapshot nullable=notnull ReliableWebhooks.WebhookDeliveryLease.Delivery[] accessors=[get:public:instance]
 P:ReliableWebhooks.WebhookDeliverySnapshot nullable=notnull ReliableWebhooks.WebhookEnqueueResult.Delivery[] accessors=[get:public:instance]
@@ -196,6 +206,7 @@ P:ReliableWebhooks.WebhookSigningOptions nullable=notnull ReliableWebhooks.Webho
 P:ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookDeliveryResult.FailureKind[] accessors=[get:public:instance]
 P:System.Boolean ReliableWebhooks.WebhookDeliveryResult.ResponseBodyTruncated[] accessors=[get:public:instance]
 P:System.Boolean ReliableWebhooks.WebhookDeliverySnapshot.IsTerminal[] accessors=[get:public:instance]
+P:System.Boolean ReliableWebhooks.WebhookDestinationPolicyResult.IsAllowed[] accessors=[get:public:instance]
 P:System.Boolean ReliableWebhooks.WebhookEnqueueResult.WasEnqueued[] accessors=[get:public:instance]
 P:System.Boolean ReliableWebhooks.WebhookRetryDecision.ShouldRetry[] accessors=[get:public:instance]
 P:System.Collections.Generic.IReadOnlyDictionary`2<System.String,System.String> nullable=notnull<notnull,notnull> ReliableWebhooks.WebhookMessage.Headers[] accessors=[get:public:instance]
@@ -246,6 +257,7 @@ T:public class sealed ReliableWebhooks.DeliveryAttempt base=System.Object interf
 T:public class sealed ReliableWebhooks.HmacSha256WebhookRequestSigner base=System.Object interfaces=[ReliableWebhooks.IWebhookRequestSigner]
 T:public class sealed ReliableWebhooks.InMemoryWebhookDeliveryStore base=System.Object interfaces=[ReliableWebhooks.IWebhookDeliveryStore]
 T:public class sealed ReliableWebhooks.InstrumentedWebhookDeliveryStore base=System.Object interfaces=[ReliableWebhooks.IWebhookDeliveryStore]
+T:public class sealed ReliableWebhooks.PublicNetworkWebhookDestinationPolicy base=System.Object interfaces=[ReliableWebhooks.IWebhookDestinationPolicy]
 T:public class sealed ReliableWebhooks.ReliableWebhooksBuilder base=System.Object interfaces=[]
 T:public class sealed ReliableWebhooks.ReliableWebhooksOptions base=System.Object interfaces=[]
 T:public class sealed ReliableWebhooks.WebhookDelivery base=System.Object interfaces=[]
@@ -253,6 +265,7 @@ T:public class sealed ReliableWebhooks.WebhookDeliveryLease base=System.Object i
 T:public class sealed ReliableWebhooks.WebhookDeliveryResult base=System.Object interfaces=[]
 T:public class sealed ReliableWebhooks.WebhookDeliverySnapshot base=System.Object interfaces=[]
 T:public class sealed ReliableWebhooks.WebhookDeliveryStoreConcurrencyException base=System.InvalidOperationException interfaces=[System.Runtime.Serialization.ISerializable]
+T:public class sealed ReliableWebhooks.WebhookDestinationPolicyResult base=System.Object interfaces=[]
 T:public class sealed ReliableWebhooks.WebhookDispatcher base=System.Object interfaces=[]
 T:public class sealed ReliableWebhooks.WebhookDispatcherOptions base=System.Object interfaces=[]
 T:public class sealed ReliableWebhooks.WebhookEnqueueResult base=System.Object interfaces=[]
@@ -272,6 +285,7 @@ T:public enum ReliableWebhooks.WebhookRetryAction base=System.Enum interfaces=[S
 T:public enum ReliableWebhooks.WebhookTransportFailureKind base=System.Enum interfaces=[System.IComparable,System.IConvertible,System.IFormattable,System.ISpanFormattable]
 T:public interface ReliableWebhooks.IWebhookDeliveryStore base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookDeliveryTransport base=- interfaces=[]
+T:public interface ReliableWebhooks.IWebhookDestinationPolicy base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookDispatcherDelay base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookEnqueueService base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookHttpResponseClassifier base=- interfaces=[]

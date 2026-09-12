@@ -523,6 +523,7 @@ public sealed class WebhookDispatcher
         {
             WebhookTransportFailureKind.Network => "Network failure",
             WebhookTransportFailureKind.Timeout => "Attempt timeout",
+            WebhookTransportFailureKind.DestinationPolicyDenied => "Destination denied by policy",
             _ => null,
         };
     }

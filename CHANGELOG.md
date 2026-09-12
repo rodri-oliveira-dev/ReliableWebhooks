@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added an opt-in webhook destination authorization policy hook and `PublicNetworkWebhookDestinationPolicy` for deployments that accept untrusted or tenant-configurable webhook URLs.
+
 ## [0.1.0] - 2026-09-12
 
 ### Added

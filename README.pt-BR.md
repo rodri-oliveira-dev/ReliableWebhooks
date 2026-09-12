@@ -156,6 +156,8 @@ webhooks.AddHostedDispatcher();
 
 `AddHostedDispatcher()` é opt-in. Sem ele, a aplicação pode resolver e executar `WebhookDispatcher` diretamente. O transporte padrão usa `IHttpClientFactory`, desabilita redirects automáticos, remove os loggers padrão de requisição do `HttpClientFactory` para evitar vazamento de paths ou queries de destino que contenham secrets, e configura `HttpClient.Timeout` como infinito para que `WebhookHttpTransportOptions.AttemptTimeout` continue sendo o timeout autoritativo de cada tentativa. Handlers ou configurações adicionais podem ser aplicados através de `ReliableWebhooksBuilder.HttpClientBuilder`.
 
+ReliableWebhooks trata destinos como confiáveis pelo operador por padrão depois de validar que são URIs HTTP/HTTPS absolutas. Aplicações que aceitam URLs de tenants ou outra origem não confiável devem configurar `WebhookHttpTransportOptions.DestinationPolicy`, por exemplo com `new PublicNetworkWebhookDestinationPolicy(allowedHosts: ["internal-webhooks.example"])`. Essa policy resolve DNS antes de cada tentativa e nega destinos loopback, unspecified, multicast, link-local, privados e carrier-grade compartilhados para IPv4 e IPv6, salvo quando um host é explicitamente permitido. Uma negação determinística da policy é uma falha permanente e não é retentada. Com `HttpClient` padrão, a validação acontece antes de `SendAsync`; mantenha redirects automáticos desabilitados e use allow-list exata para destinos de intranet intencionais.
+
 Classifier de resposta, política de retry, transporte e dispatcher usam registros substituíveis por DI. Store e signer são fornecidos pela aplicação, e as abstrações de temporização do dispatcher ou fonte de jitter também podem ser substituídas. Opções inválidas de dispatcher, retry, transporte ou assinatura são validadas na resolução das opções e pela validação de startup do Generic Host.
 
 O código da aplicação pode fazer enqueue sem conhecer os detalhes de agendamento da persistência:
@@ -308,6 +310,7 @@ Os principais comportamentos são expostos por abstrações públicas:
 - `IWebhookHttpResponseClassifier` — classificação de respostas HTTP;
 - `IWebhookRetryPolicy` — decisões de retry e dead letter;
 - `IWebhookRetryJitterSource` — geração de jitter substituível;
+- `IWebhookDestinationPolicy` — autorização de destinos para URLs de webhook não confiáveis;
 - `IWebhookRequestSigner` — estratégia de assinatura;
 - `IWebhookSigningSecretProvider` — resolução de segredo por mensagem;
 - `ReliableWebhooksInstrumentation` — nomes públicos e estáveis de diagnostics.

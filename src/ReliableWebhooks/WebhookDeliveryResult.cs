@@ -124,4 +124,16 @@ public sealed class WebhookDeliveryResult
             null,
             null);
     }
+
+    internal static WebhookDeliveryResult DestinationPolicyDenied()
+    {
+        return new WebhookDeliveryResult(
+            WebhookDeliveryOutcome.PermanentFailure,
+            null,
+            WebhookTransportFailureKind.DestinationPolicyDenied,
+            ReadOnlyMemory<byte>.Empty,
+            false,
+            null,
+            null);
+    }
 }

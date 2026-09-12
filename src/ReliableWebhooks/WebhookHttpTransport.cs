@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 
 namespace ReliableWebhooks;
 
@@ -23,6 +24,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
     private readonly IWebhookHttpResponseClassifier classifier;
     private readonly TimeSpan attemptTimeout;
     private readonly int maxResponseBodyBytes;
+    private readonly IWebhookDestinationPolicy? destinationPolicy;
     private readonly IWebhookRequestSigner? signer;
     private readonly WebhookSigningOptions signingOptions;
 
@@ -102,6 +104,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         this.classifier = classifier ?? new DefaultWebhookHttpResponseClassifier();
         attemptTimeout = options.AttemptTimeout;
         maxResponseBodyBytes = options.MaxResponseBodyBytes;
+        destinationPolicy = options.DestinationPolicy;
         this.signer = signer;
         signingOptions = options.Signing;
     }
@@ -130,6 +133,18 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
 
         try
         {
+            if (destinationPolicy is not null)
+            {
+                WebhookDestinationPolicyResult destinationAuthorization = await destinationPolicy
+                    .AuthorizeAsync(message.Destination, attemptToken)
+                    .ConfigureAwait(false);
+
+                if (!destinationAuthorization.IsAllowed)
+                {
+                    return WebhookDeliveryResult.DestinationPolicyDenied();
+                }
+            }
+
             using HttpRequestMessage request = await CreateRequestAsync(
                 message,
                 payload,
@@ -166,6 +181,10 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
             return WebhookDeliveryResult.TimeoutFailure();
         }
         catch (HttpRequestException)
+        {
+            return WebhookDeliveryResult.NetworkFailure();
+        }
+        catch (SocketException)
         {
             return WebhookDeliveryResult.NetworkFailure();
         }

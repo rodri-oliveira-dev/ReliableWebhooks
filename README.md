@@ -156,6 +156,8 @@ webhooks.AddHostedDispatcher();
 
 `AddHostedDispatcher()` is opt-in. Without it, applications can resolve and run `WebhookDispatcher` themselves. The default transport uses `IHttpClientFactory`, disables automatic redirects, removes the default `HttpClientFactory` request loggers to avoid leaking secret-bearing destination paths or query strings, and sets `HttpClient.Timeout` to infinite so `WebhookHttpTransportOptions.AttemptTimeout` remains the authoritative per-attempt timeout. Additional handlers or client configuration can be added through `ReliableWebhooksBuilder.HttpClientBuilder`.
 
+ReliableWebhooks treats destinations as operator-trusted by default after validating that they are absolute HTTP/HTTPS URIs. Applications that accept tenant-provided or otherwise untrusted webhook URLs should configure `WebhookHttpTransportOptions.DestinationPolicy`, for example with `new PublicNetworkWebhookDestinationPolicy(allowedHosts: ["internal-webhooks.example"])`. That policy resolves DNS names before each attempt and denies loopback, unspecified, multicast, link-local, private, and shared carrier-grade targets for IPv4 and IPv6 unless a host is explicitly allow-listed. A deterministic policy denial is a permanent delivery failure and is not retried. With a standard `HttpClient`, validation happens before `SendAsync`; keep automatic redirects disabled and use an exact allow-list for any intended intranet destinations to avoid broad SSRF bypasses.
+
 The default response classifier, retry policy, transport, and dispatcher are registered with replaceable DI registrations. Stores and signers are application-provided, and dispatcher timing or retry jitter abstractions can also be replaced. Invalid dispatcher, retry, transport, or signing options are validated when options are resolved and by Generic Host startup validation.
 
 Application code can enqueue without depending directly on persistence scheduling details:
@@ -347,6 +349,7 @@ The main behaviors are exposed through public abstractions:
 - `IWebhookHttpResponseClassifier` — HTTP response classification;
 - `IWebhookRetryPolicy` — retry and dead-letter decisions;
 - `IWebhookRetryJitterSource` — deterministic or custom jitter generation;
+- `IWebhookDestinationPolicy` — destination authorization for untrusted webhook URLs;
 - `IWebhookRequestSigner` — request-signing strategy;
 - `IWebhookSigningSecretProvider` — per-message signing secret resolution;
 - `ReliableWebhooksInstrumentation` — stable public diagnostics names for tracing and metrics integration.

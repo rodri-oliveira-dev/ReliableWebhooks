@@ -340,6 +340,7 @@ OpenTelemetry consumers can register the activity source and meter in their own 
 | `Retry.JitterFactor` | `0.2` | Finite number from `0` through `1` |
 | `Transport.AttemptTimeout` | `30 seconds` | Positive duration or `Timeout.InfiniteTimeSpan` |
 | `Transport.MaxResponseBodyBytes` | `16 KiB` | Zero or greater |
+| `Transport.DestinationPolicy` | `null` | Configure for untrusted or tenant-provided webhook URLs |
 | Signing header names | `X-Webhook-*` defaults | Non-empty and unique, case-insensitively |
 | Signing time provider | `TimeProvider.System` | Non-null |
 
@@ -348,6 +349,26 @@ The DI-managed `HttpClient` has automatic redirects disabled, default `HttpClien
 Default HTTP client logging is removed because webhook destination paths and query strings often carry endpoint secrets. Applications that deliberately add raw HTTP request logging back to `ReliableWebhooksBuilder.HttpClientBuilder` must treat destination URIs and custom header values as sensitive.
 
 Invalid options fail during host startup with actionable validation messages.
+
+## Destination security and SSRF boundary
+
+ReliableWebhooks treats destinations as operator-trusted by default. The `WebhookMessage` constructor verifies only that the destination is an absolute HTTP or HTTPS URI; it does not decide whether a tenant, user, imported subscriber record, or other partially trusted source should be allowed to make the application send traffic to that network location.
+
+When webhook destinations are tenant-configurable or otherwise untrusted, configure `WebhookHttpTransportOptions.DestinationPolicy`:
+
+```csharp
+options.Transport = new WebhookHttpTransportOptions
+{
+    DestinationPolicy = new PublicNetworkWebhookDestinationPolicy(
+        allowedHosts: ["partner-intranet-webhooks.example"]),
+};
+```
+
+`PublicNetworkWebhookDestinationPolicy` resolves DNS before each attempt and denies destinations that resolve to loopback, unspecified, multicast, link-local, RFC1918 private IPv4, IPv6 unique-local, shared carrier-grade IPv4, or other non-public address families. A denied destination returns a permanent delivery result with `WebhookTransportFailureKind.DestinationPolicyDenied`, so the dispatcher records a permanent failure instead of retrying forever.
+
+Use `allowedHosts` only for exact host names or IP literals that your operators intentionally allow, such as a known intranet webhook endpoint. This is safer than disabling the policy for every destination.
+
+The policy validates before the `HttpClient` sends the request. With a normal `HttpClient` handler, DNS could theoretically change between policy resolution and the handler's connection. Keep automatic redirects disabled, keep tenant URL updates governed by application authorization, prefer exact allow-lists for private targets, and use network egress controls when your threat model requires connection-time enforcement.
 
 ## Safe production defaults and tuning
 
