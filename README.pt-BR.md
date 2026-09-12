@@ -31,7 +31,7 @@ ReliableWebhooks trata esses pontos separando o fluxo de entrega em responsabili
 Uma entrega com ReliableWebhooks é estruturada como uma pequena máquina de estados, e não como uma chamada HTTP fire-and-forget:
 
 1. Crie um `WebhookMessage` com ID estável, tipo de evento, destino, bytes exatos do payload, content type e headers opcionais.
-2. Faça o enqueue através de `IWebhookDeliveryStore`. Tentativas duplicadas com o mesmo ID estável têm comportamento determinístico.
+2. Faça o enqueue através de `IWebhookDeliveryStore`. Tentativas duplicadas com o mesmo ID estável têm comportamento determinístico. Envolva o store com `InstrumentedWebhookDeliveryStore` quando precisar de logs de enqueue e da métrica de queued independentemente da implementação de persistência.
 3. `WebhookDispatcher` faz claim atômico das entregas vencidas até o limite de slots de concorrência disponíveis e recebe instâncias expirantes de `WebhookDeliveryLease`.
 4. `WebhookHttpTransport` executa um único `POST` HTTP por entrega em lease; quando um signer está configurado, ele assina exatamente o mesmo buffer usado na requisição e adiciona headers com ID, tipo do evento, timestamp e assinatura.
 5. O transporte retorna um `WebhookDeliveryResult` com resultado independente do transporte.
@@ -78,7 +78,8 @@ var message = new WebhookMessage(
     payload: payload,
     contentType: "application/json");
 
-IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore();
+IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+    new InMemoryWebhookDeliveryStore());
 await store.EnqueueAsync(message, DateTimeOffset.UtcNow);
 
 using var handler = new HttpClientHandler
@@ -167,12 +168,16 @@ A mesma classe expõe nomes estáveis para a activity de tentativa e para as mé
 
 ### Logs estruturados
 
-`WebhookDispatcher` possui um overload aditivo de construtor que recebe `ILogger`. Os construtores existentes continuam válidos e usam um logger no-op. O store em memória também aceita opcionalmente um `ILogger` para eventos de enqueue.
+`WebhookDispatcher` possui um overload aditivo de construtor que recebe `ILogger`. Os construtores existentes continuam válidos e usam um logger no-op. A telemetria de enqueue é fornecida por `InstrumentedWebhookDeliveryStore`, um decorator que pode envolver qualquer `IWebhookDeliveryStore`, inclusive um store durável customizado de produção.
 
 ```csharp
 ILogger logger = loggerFactory.CreateLogger("ReliableWebhooks");
 
-IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore(logger);
+IWebhookDeliveryStore durableStore = GetApplicationWebhookStore();
+IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+    durableStore,
+    logger);
+
 var dispatcher = new WebhookDispatcher(
     store,
     transport,
@@ -181,6 +186,8 @@ var dispatcher = new WebhookDispatcher(
     delay: null,
     logger);
 ```
+
+`InstrumentedWebhookDeliveryStore` emite o evento de enqueue e a métrica queued somente quando uma nova entrega é realmente persistida. Enqueues idempotentes duplicados não contabilizam novamente a entrega. A telemetria de claim é emitida pelo `WebhookDispatcher`, de modo que o mesmo claim seja registrado exatamente uma vez e stores customizados tenham a mesma cobertura de ciclo de vida.
 
 O ciclo de vida usa Event IDs estáveis para enqueue, claim, início da tentativa, sucesso, agendamento de retry, falha permanente, dead letter, cancelamento, perda de lease e falha inesperada. As propriedades são estruturadas e excluem deliberadamente corpos de payload, URLs/query strings de destino, segredos de assinatura e assinaturas.
 
@@ -274,6 +281,7 @@ A versão atual em desenvolvimento ainda não inclui o store durável de produç
 Os principais comportamentos são expostos por abstrações públicas:
 
 - `IWebhookDeliveryStore` — persistência e coordenação de leases;
+- `InstrumentedWebhookDeliveryStore` — decorator de persistência que adiciona logs de enqueue e a métrica queued a qualquer implementação de store;
 - `IWebhookDeliveryTransport` — transporte de uma única tentativa usado pelo dispatcher;
 - `IWebhookDispatcherDelay` — temporização substituível para polling/grace period em testes determinísticos ou agendamento customizado;
 - `IWebhookHttpResponseClassifier` — classificação de respostas HTTP;
