@@ -6,7 +6,7 @@ ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiáv
 
 Ela fornece componentes combináveis para identidade estável de webhooks, persistência e coordenação por lease, dispatch concorrente limitado, envio HTTP de uma única tentativa, assinatura HMAC-SHA256, classificação de respostas, agendamento determinístico de retries, observabilidade independente de backend e integração com injeção de dependência/hosting padrão do .NET. O objetivo é tornar explícitas as preocupações de confiabilidade da entrega de webhooks, em vez de escondê-las dentro de um loop de background opaco.
 
-> **Status:** a v0.1.0 está em desenvolvimento. O primeiro pacote público no NuGet ainda não foi lançado. A versão atual fornece os componentes de confiabilidade, dispatcher concorrente, assinatura, observabilidade, injeção de dependência e integração opcional com hosted dispatcher descritos abaixo; o store durável nativo ainda faz parte do trabalho necessário antes da primeira release pública.
+> **Status:** a v0.1.0 está em desenvolvimento. O primeiro pacote público no NuGet ainda não foi lançado. A versão atual fornece os componentes de confiabilidade, dispatcher concorrente, assinatura, observabilidade, injeção de dependência e integração opcional com hosted dispatcher descritos abaixo. O core define um contrato `IWebhookDeliveryStore` independente de tecnologia e suas semânticas de conformidade; aplicações de produção fornecem o store durável adequado à sua stack de persistência.
 
 ## Por que ReliableWebhooks?
 
@@ -110,6 +110,8 @@ await dispatcher.RunAsync(stoppingToken);
 `WebhookDispatcher` não cria trabalho de forma ilimitada: ele faz claim no máximo da quantidade de slots de concorrência disponíveis. No shutdown, ele interrompe novos claims, permite que entregas em andamento terminem durante o grace period configurado e cancela as tentativas restantes depois desse limite. Trabalho cancelado não é marcado como sucesso; sua lease pode expirar e ser recuperada posteriormente.
 
 `InMemoryWebhookDeliveryStore` é local ao processo e **não é durável**. Ele existe apenas para testes e exemplos e não deve ser usado como persistência de produção.
+
+Para o contrato completo de persistência e as orientações de conformidade, consulte [`docs/persistence.pt-BR.md`](docs/persistence.pt-BR.md).
 
 ### Injeção de dependência e hosted dispatcher
 
@@ -272,7 +274,7 @@ ReliableWebhooks trabalha com semântica explícita de entrega:
 - **A telemetria é independente de backend.** Exporters continuam sob responsabilidade da aplicação.
 - **A persistência é substituível.** O pacote principal não depende de um provider de banco específico.
 
-A versão atual em desenvolvimento ainda não inclui o store durável de produção com EF Core planejado para a v0.1.0.
+A v0.1.0 de `ReliableWebhooks` não exige um adapter de persistência de produção nativo. A aplicação fornece um `IWebhookDeliveryStore` durável compatível; adapters opcionais para EF Core, Dapper, Redis, arquivos ou outras tecnologias podem ser introduzidos de forma independente.
 
 ## Extensibilidade
 
