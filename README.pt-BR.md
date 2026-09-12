@@ -113,6 +113,8 @@ IWebhookRequestSigner signer = new HmacSha256WebhookRequestSigner(secretProvider
 
 var transport = new WebhookHttpTransport(
     httpClient,
+    classifier: null,
+    options: null,
     signer: signer);
 ```
 
