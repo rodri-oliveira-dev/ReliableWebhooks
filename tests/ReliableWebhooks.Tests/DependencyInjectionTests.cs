@@ -61,7 +61,7 @@ public sealed class DependencyInjectionTests
             options.Dispatcher.PollInterval = TimeSpan.FromMinutes(1);
             options.Dispatcher.ShutdownGracePeriod = TimeSpan.FromSeconds(1);
         });
-        _ = builder.HttpClientBuilder.ConfigurePrimaryHttpMessageHandler(() => handler);
+        builder.HttpClientBuilder.ConfigurePrimaryHttpMessageHandler(() => handler);
         _ = builder.AddHostedDispatcher();
 
         await using ServiceProvider provider = services.BuildServiceProvider();
