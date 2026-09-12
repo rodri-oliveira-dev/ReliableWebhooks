@@ -1,0 +1,145 @@
+name: Issue 11 docs temporary
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  update-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: true
+
+      - name: Atualizar READMEs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          english = Path("README.md")
+          text = english.read_text(encoding="utf-8")
+          text = text.replace(
+              "> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives, concurrent dispatcher, signing, and observability described below; the built-in durable store and dependency-injection integration are still part of the work required before the first public release.",
+              "> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives, concurrent dispatcher, signing, observability, dependency injection, and optional hosted-dispatcher integration described below; the built-in durable store is still part of the work required before the first public release.")
+
+          marker = "`InMemoryWebhookDeliveryStore` is process-local and **not durable**. It exists for tests and samples only and must not be used as production persistence.\n\n### Signing webhooks"
+          section = """`InMemoryWebhookDeliveryStore` is process-local and **not durable**. It exists for tests and samples only and must not be used as production persistence.
+
+### Dependency injection and hosted dispatcher
+
+Applications using the .NET Generic Host can register the standard integration through `AddReliableWebhooks`. A production application must register its own `IWebhookDeliveryStore`; ReliableWebhooks intentionally does not select the non-durable in-memory store as a production default.
+
+```csharp
+services.AddSingleton<IWebhookDeliveryStore, MyDurableWebhookStore>();
+
+ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
+{
+    options.Dispatcher.MaxConcurrency = 8;
+    options.Dispatcher.LeaseDuration = TimeSpan.FromMinutes(2);
+    options.Dispatcher.PollInterval = TimeSpan.FromSeconds(1);
+    options.Transport = new WebhookHttpTransportOptions
+    {
+        AttemptTimeout = TimeSpan.FromSeconds(30),
+    };
+});
+
+webhooks.AddHostedDispatcher();
+```
+
+`AddHostedDispatcher()` is opt-in. Without it, applications can resolve and run `WebhookDispatcher` themselves. The default transport uses `IHttpClientFactory`, disables automatic redirects, and sets `HttpClient.Timeout` to infinite so `WebhookHttpTransportOptions.AttemptTimeout` remains the authoritative per-attempt timeout. Additional handlers or client configuration can be added through `ReliableWebhooksBuilder.HttpClientBuilder`.
+
+The default response classifier, retry policy, transport, signer, store, and dispatcher timing abstractions remain replaceable through DI. Invalid dispatcher, retry, transport, or signing options are validated when options are resolved and by Generic Host startup validation.
+
+Application code can enqueue without depending directly on persistence scheduling details:
+
+```csharp
+IWebhookEnqueueService webhookEnqueue =
+    serviceProvider.GetRequiredService<IWebhookEnqueueService>();
+
+await webhookEnqueue.EnqueueAsync(message, cancellationToken);
+```
+
+The integration depends only on `Microsoft.Extensions.*`; it does not require ASP.NET Core.
+
+### Signing webhooks"""
+          if marker not in text:
+              raise SystemExit("English DI insertion marker not found")
+          text = text.replace(marker, section)
+          text = text.replace(
+              "The current development version does not yet include the production durable EF Core store or dependency-injection/hosted-service integration planned for v0.1.0.",
+              "The current development version does not yet include the production durable EF Core store planned for v0.1.0.")
+          text = text.replace(
+              "- `InstrumentedWebhookDeliveryStore` — persistence decorator that adds enqueue logs and the queued metric to any store implementation;\n- `IWebhookDeliveryTransport` — one-attempt delivery transport used by the dispatcher;",
+              "- `InstrumentedWebhookDeliveryStore` — persistence decorator that adds enqueue logs and the queued metric to any store implementation;\n- `IWebhookEnqueueService` — application-facing enqueue API registered by the DI integration;\n- `IWebhookDeliveryTransport` — one-attempt delivery transport used by the dispatcher;")
+          english.write_text(text, encoding="utf-8")
+
+          portuguese = Path("README.pt-BR.md")
+          text = portuguese.read_text(encoding="utf-8")
+          text = text.replace(
+              "> **Status:** a v0.1.0 está em desenvolvimento. O primeiro pacote público no NuGet ainda não foi lançado. A versão atual fornece os componentes de confiabilidade, dispatcher concorrente, assinatura e observabilidade descritos abaixo; o store durável nativo e a integração com injeção de dependência ainda fazem parte do trabalho necessário antes da primeira release pública.",
+              "> **Status:** a v0.1.0 está em desenvolvimento. O primeiro pacote público no NuGet ainda não foi lançado. A versão atual fornece os componentes de confiabilidade, dispatcher concorrente, assinatura, observabilidade, injeção de dependência e integração opcional com hosted dispatcher descritos abaixo; o store durável nativo ainda faz parte do trabalho necessário antes da primeira release pública.")
+
+          marker = "`InMemoryWebhookDeliveryStore` é local ao processo e **não é durável**. Ele existe apenas para testes e exemplos e não deve ser usado como persistência de produção.\n\n### Assinando webhooks"
+          section = """`InMemoryWebhookDeliveryStore` é local ao processo e **não é durável**. Ele existe apenas para testes e exemplos e não deve ser usado como persistência de produção.
+
+### Injeção de dependência e hosted dispatcher
+
+Aplicações que usam o Generic Host do .NET podem registrar a integração padrão através de `AddReliableWebhooks`. Uma aplicação de produção deve registrar seu próprio `IWebhookDeliveryStore`; ReliableWebhooks não escolhe implicitamente o store em memória, que não é durável, como default de produção.
+
+```csharp
+services.AddSingleton<IWebhookDeliveryStore, MyDurableWebhookStore>();
+
+ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
+{
+    options.Dispatcher.MaxConcurrency = 8;
+    options.Dispatcher.LeaseDuration = TimeSpan.FromMinutes(2);
+    options.Dispatcher.PollInterval = TimeSpan.FromSeconds(1);
+    options.Transport = new WebhookHttpTransportOptions
+    {
+        AttemptTimeout = TimeSpan.FromSeconds(30),
+    };
+});
+
+webhooks.AddHostedDispatcher();
+```
+
+`AddHostedDispatcher()` é opt-in. Sem ele, a aplicação pode resolver e executar `WebhookDispatcher` diretamente. O transporte padrão usa `IHttpClientFactory`, desabilita redirects automáticos e configura `HttpClient.Timeout` como infinito para que `WebhookHttpTransportOptions.AttemptTimeout` continue sendo o timeout autoritativo de cada tentativa. Handlers ou configurações adicionais podem ser aplicados através de `ReliableWebhooksBuilder.HttpClientBuilder`.
+
+Classifier, política de retry, transporte, signer, store e abstrações de temporização continuam substituíveis por DI. Opções inválidas de dispatcher, retry, transporte ou assinatura são validadas na resolução das opções e durante a validação de startup do Generic Host.
+
+O código da aplicação pode fazer enqueue sem conhecer os detalhes de agendamento da persistência:
+
+```csharp
+IWebhookEnqueueService webhookEnqueue =
+    serviceProvider.GetRequiredService<IWebhookEnqueueService>();
+
+await webhookEnqueue.EnqueueAsync(message, cancellationToken);
+```
+
+A integração depende apenas de `Microsoft.Extensions.*`; ela não exige ASP.NET Core.
+
+### Assinando webhooks"""
+          if marker not in text:
+              raise SystemExit("Portuguese DI insertion marker not found")
+          text = text.replace(marker, section)
+          text = text.replace(
+              "A versão atual em desenvolvimento ainda não inclui o store durável de produção com EF Core nem a integração com injeção de dependência/hosted service planejados para a v0.1.0.",
+              "A versão atual em desenvolvimento ainda não inclui o store durável de produção com EF Core planejado para a v0.1.0.")
+          portuguese.write_text(text, encoding="utf-8")
+
+      - name: Persistir documentação e remover workflow temporário
+        shell: bash
+        run: |
+          rm .github/workflows/docs-issue11-temp.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md README.pt-BR.md .github/workflows/docs-issue11-temp.yml
+          git commit -m "docs: documentar integração com DI e hosted dispatcher"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
