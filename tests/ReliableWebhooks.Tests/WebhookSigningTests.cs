@@ -116,7 +116,7 @@ public sealed class WebhookSigningTests
             signer: new ConstantSigner("custom-signature"));
 
         _ = await transport.SendAsync(
-            CreateMessage([1, 2, 3]),
+            CreateMessage(new byte[] { 1, 2, 3 }),
             TestContext.Current.CancellationToken);
 
         Assert.Equal("webhook-123", handler.GetHeader("Webhook-Delivery"));
@@ -145,7 +145,9 @@ public sealed class WebhookSigningTests
             signer: signer);
 
         InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => transport.SendAsync(CreateMessage([1, 2, 3]), TestContext.Current.CancellationToken));
+            () => transport.SendAsync(
+                CreateMessage(new byte[] { 1, 2, 3 }),
+                TestContext.Current.CancellationToken));
 
         Assert.DoesNotContain(secretText, exception.ToString(), StringComparison.Ordinal);
     }
