@@ -1,3 +1,6 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+
 namespace ReliableWebhooks;
 
 /// <summary>
@@ -10,6 +13,21 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
 {
     private readonly object gate = new();
     private readonly Dictionary<string, Entry> entries = new(StringComparer.Ordinal);
+    private readonly ILogger logger;
+
+    /// <summary>Initializes the store without emitting structured logs.</summary>
+    public InMemoryWebhookDeliveryStore()
+        : this(NullLogger.Instance)
+    {
+    }
+
+    /// <summary>Initializes the store with a logger for enqueue and claim lifecycle events.</summary>
+    /// <param name="logger">The logger that receives safe structured lifecycle events.</param>
+    public InMemoryWebhookDeliveryStore(ILogger logger)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        this.logger = logger;
+    }
 
     /// <inheritdoc />
     public Task<WebhookEnqueueResult> EnqueueAsync(
@@ -19,6 +37,8 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
     {
         ArgumentNullException.ThrowIfNull(message);
         cancellationToken.ThrowIfCancellationRequested();
+
+        WebhookEnqueueResult result;
 
         lock (gate)
         {
@@ -30,10 +50,15 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
 
             Entry entry = new(message, nextAttemptAt);
             entries.Add(message.Id, entry);
-
-            return Task.FromResult(
-                new WebhookEnqueueResult(WebhookEnqueueStatus.Enqueued, CreateSnapshot(entry)));
+            result = new WebhookEnqueueResult(WebhookEnqueueStatus.Enqueued, CreateSnapshot(entry));
         }
+
+        ReliableWebhooksLog.Enqueued(logger, message.Id, message.EventType);
+        ReliableWebhooksInstrumentation.Queued.Add(
+            1,
+            new KeyValuePair<string, object?>(ReliableWebhooksInstrumentation.EventTypeTagName, message.EventType));
+
+        return Task.FromResult(result);
     }
 
     /// <inheritdoc />
@@ -52,6 +77,8 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
 
         cancellationToken.ThrowIfCancellationRequested();
 
+        List<WebhookDeliveryLease> leases;
+
         lock (gate)
         {
             Entry[] dueEntries = entries.Values
@@ -61,7 +88,7 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
                 .Take(maxCount)
                 .ToArray();
 
-            List<WebhookDeliveryLease> leases = new(dueEntries.Length);
+            leases = new List<WebhookDeliveryLease>(dueEntries.Length);
             DateTimeOffset expiresAt = now.Add(leaseDuration);
 
             foreach (Entry entry in dueEntries)
@@ -76,9 +103,18 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
                 WebhookDeliverySnapshot snapshot = CreateSnapshot(entry);
                 leases.Add(new WebhookDeliveryLease(snapshot, token, expiresAt));
             }
-
-            return Task.FromResult<IReadOnlyList<WebhookDeliveryLease>>(leases);
         }
+
+        foreach (WebhookDeliveryLease lease in leases)
+        {
+            ReliableWebhooksLog.Claimed(
+                logger,
+                lease.Delivery.Message.Id,
+                lease.Delivery.Message.EventType,
+                lease.Delivery.AttemptCount);
+        }
+
+        return Task.FromResult<IReadOnlyList<WebhookDeliveryLease>>(leases);
     }
 
     /// <inheritdoc />
@@ -320,45 +356,18 @@ public sealed class InMemoryWebhookDeliveryStore : IWebhookDeliveryStore
             NextAttemptAt = nextAttemptAt;
         }
 
-        internal WebhookMessage Message
-        {
-            get;
-        }
+        internal WebhookMessage Message { get; }
 
-        internal DeliveryState State
-        {
-            get;
-            set;
-        }
+        internal DeliveryState State { get; set; }
 
-        internal int AttemptCount
-        {
-            get;
-            set;
-        }
+        internal int AttemptCount { get; set; }
 
-        internal DateTimeOffset? NextAttemptAt
-        {
-            get;
-            set;
-        }
+        internal DateTimeOffset? NextAttemptAt { get; set; }
 
-        internal string? LastError
-        {
-            get;
-            set;
-        }
+        internal string? LastError { get; set; }
 
-        internal Guid? LeaseToken
-        {
-            get;
-            set;
-        }
+        internal Guid? LeaseToken { get; set; }
 
-        internal DateTimeOffset? LeaseExpiresAt
-        {
-            get;
-            set;
-        }
+        internal DateTimeOffset? LeaseExpiresAt { get; set; }
     }
 }
