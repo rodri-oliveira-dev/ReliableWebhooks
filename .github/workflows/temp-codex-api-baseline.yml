@@ -16,6 +16,26 @@ jobs:
       - name: Checkout validated commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Patch verifier analyzer settings
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/verify-public-api.cs')
+          text = path.read_text(encoding='utf-8')
+          if '#:property EnableTrimAnalyzer=false' not in text:
+              text = text.replace(
+                  '#:property RestorePackagesWithLockFile=false\n',
+                  '#:property RestorePackagesWithLockFile=false\n#:property EnableTrimAnalyzer=false\n',
+                  1,
+              )
+          text = text.replace(
+              '\nsealed class SnapshotLoadContext : AssemblyLoadContext\n',
+              '\ninternal sealed class SnapshotLoadContext : AssemblyLoadContext\n',
+              1,
+          )
+          path.write_text(text, encoding='utf-8', newline='\n')
+          PY
+
       - name: Setup .NET 10
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -31,13 +51,13 @@ jobs:
           dotnet run --file scripts/verify-public-api.cs -- src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll src/ReliableWebhooks/PublicApi.v0.1.0.txt --write
           dotnet run --file scripts/verify-public-api.cs -- src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll src/ReliableWebhooks/PublicApi.v0.1.0.txt
 
-      - name: Commit baseline
+      - name: Commit verifier and baseline
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/ReliableWebhooks/PublicApi.v0.1.0.txt
+          git add scripts/verify-public-api.cs src/ReliableWebhooks/PublicApi.v0.1.0.txt
           if git diff --cached --quiet; then
-            echo "Baseline is already current."
+            echo "Verifier and baseline are already current."
             exit 0
           fi
           git commit -m "test: regenerate v0.1.0 public API signatures"
