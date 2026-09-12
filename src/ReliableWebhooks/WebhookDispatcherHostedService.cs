@@ -6,7 +6,7 @@ internal sealed class WebhookDispatcherHostedService : BackgroundService
 {
     private readonly WebhookDispatcher dispatcher;
 
-    internal WebhookDispatcherHostedService(WebhookDispatcher dispatcher)
+    public WebhookDispatcherHostedService(WebhookDispatcher dispatcher)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         this.dispatcher = dispatcher;
