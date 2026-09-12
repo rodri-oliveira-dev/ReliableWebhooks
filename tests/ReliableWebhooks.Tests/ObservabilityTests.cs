@@ -35,14 +35,14 @@ public sealed class ObservabilityTests
         const string eventType = "observability.enqueue";
         RecordingLogger logger = new();
         using TelemetryRecorder telemetry = new();
-        IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+        InstrumentedWebhookDeliveryStore store = new(
             new InMemoryWebhookDeliveryStore(),
             logger);
         WebhookMessage message = new(
             webhookId,
             eventType,
             new Uri("https://example.test/webhooks"),
-            [1, 2, 3],
+            new byte[] { 1, 2, 3 },
             "application/json");
 
         WebhookEnqueueResult first = await store.EnqueueAsync(
@@ -195,7 +195,7 @@ public sealed class ObservabilityTests
         Uri? destination = null,
         IReadOnlyDictionary<string, string>? headers = null)
     {
-        IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+        InstrumentedWebhookDeliveryStore store = new(
             new InMemoryWebhookDeliveryStore(),
             logger);
         WebhookMessage message = new(
