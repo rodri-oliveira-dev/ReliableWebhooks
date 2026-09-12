@@ -46,6 +46,8 @@ webhooks.AddHostedDispatcher();
 
 `AddHostedDispatcher()` is optional. When enabled, the Generic Host starts and stops the dispatcher with the application. Without it, the application can resolve `WebhookDispatcher` and control its lifetime directly.
 
+`IWebhookDeliveryStore` may be registered as singleton, scoped, or transient. The DI integration resolves the store inside a short-lived operation scope for each enqueue, claim, renewal, or state-transition call, so singleton ReliableWebhooks services do not capture scoped adapters from the root provider. Scoped and transient adapters must coordinate through shared durable state; do not register a per-scope in-memory store and expect different operation scopes to see the same queue.
+
 The core package does not require Entity Framework Core, Dapper, ADO.NET, Redis, files, a relational database, or a document database. Any implementation technology is valid when its `IWebhookDeliveryStore` behavior satisfies the contract.
 
 ## Enqueue from application code

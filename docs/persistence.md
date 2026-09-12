@@ -119,7 +119,9 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks();
 webhooks.AddHostedDispatcher();
 ```
 
-The selected lifetime must match the adapter's own thread-safety and resource-management requirements. The ReliableWebhooks core contract does not require a particular DI lifetime.
+The selected lifetime must match the adapter's own thread-safety and resource-management requirements. The ReliableWebhooks DI integration supports singleton, scoped, and transient `IWebhookDeliveryStore` registrations. DI-created singleton services such as `IWebhookEnqueueService`, `WebhookDispatcher`, and the hosted dispatcher do not capture the store from the root provider; they resolve it inside a short-lived operation scope for each store call.
+
+Scoped and transient adapters must still coordinate through durable/shared backing state. A scoped store instance may wrap a scoped database session, unit of work, or client, but independent operation scopes must observe the same persisted deliveries, leases, and concurrency tokens.
 
 ## Delivery guarantees
 
