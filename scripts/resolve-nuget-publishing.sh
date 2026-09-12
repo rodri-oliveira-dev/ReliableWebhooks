@@ -12,27 +12,35 @@ fi
 trimmed_user="${nuget_user#"${nuget_user%%[![:space:]]*}"}"
 trimmed_user="${trimmed_user%"${trimmed_user##*[![:space:]]}"}"
 
-nuget_publishing_enabled=false
-nuget_publishing_reason='disabled'
-
 if [[ "$should_publish" != "true" ]]; then
-  nuget_publishing_reason='release-disabled'
   echo 'NuGet publication disabled: release publication gate is disabled.'
-elif [[ -z "$trimmed_user" ]]; then
-  nuget_publishing_reason='nuget-user-not-configured'
-  echo 'NuGet publication disabled: NUGET_USER is not configured or is empty.'
-else
-  nuget_publishing_enabled=true
-  nuget_publishing_reason='enabled'
-  echo 'NuGet publication enabled: release publication is requested and NUGET_USER is configured.'
+
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    {
+      echo 'nuget_publishing_enabled=false'
+      echo 'nuget_publishing_reason=release-disabled'
+    } >> "$GITHUB_OUTPUT"
+  else
+    echo 'nuget_publishing_enabled=false'
+    echo 'nuget_publishing_reason=release-disabled'
+  fi
+
+  exit 0
 fi
+
+if [[ -z "$trimmed_user" ]]; then
+  echo '::error::Official publication requires repository variable NUGET_USER and a matching NuGet.org Trusted Publishing policy.'
+  exit 2
+fi
+
+echo 'NuGet publication enabled: release publication is requested and NUGET_USER is configured.'
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {
-    echo "nuget_publishing_enabled=$nuget_publishing_enabled"
-    echo "nuget_publishing_reason=$nuget_publishing_reason"
+    echo 'nuget_publishing_enabled=true'
+    echo 'nuget_publishing_reason=enabled'
   } >> "$GITHUB_OUTPUT"
 else
-  echo "nuget_publishing_enabled=$nuget_publishing_enabled"
-  echo "nuget_publishing_reason=$nuget_publishing_reason"
+  echo 'nuget_publishing_enabled=true'
+  echo 'nuget_publishing_reason=enabled'
 fi
