@@ -244,6 +244,43 @@ public sealed class WebhookDispatcherTests
     }
 
     [Fact]
+    public async Task FaultedAttemptCancelsAndDrainsRemainingWorkBeforeRethrowing()
+    {
+        InMemoryWebhookDeliveryStore store = new();
+        _ = await store.EnqueueAsync(
+            CreateMessage("a-fault"),
+            Now,
+            TestContext.Current.CancellationToken);
+        _ = await store.EnqueueAsync(
+            CreateMessage("b-blocking"),
+            Now,
+            TestContext.Current.CancellationToken);
+        FaultingAndBlockingTransport transport = new();
+        WebhookDispatcher dispatcher = CreateDispatcher(
+            store,
+            transport,
+            delay: new ImmediateDelay(),
+            maxConcurrency: 2,
+            shutdownGracePeriod: TimeSpan.Zero);
+
+        Task run = dispatcher.RunAsync(TestContext.Current.CancellationToken);
+        await transport.BlockingStarted.WaitAsync(TestContext.Current.CancellationToken);
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => run.WaitAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("transport failure", exception.Message);
+        await transport.BlockingCanceled.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.True(run.IsCompleted);
+
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+            "b-blocking",
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(snapshot);
+        Assert.Equal(DeliveryState.InProgress, snapshot.State);
+    }
+
+    [Fact]
     public async Task EmptyDispatcherUsesControllablePollingDelay()
     {
         InMemoryWebhookDeliveryStore store = new();
@@ -365,6 +402,47 @@ public sealed class WebhookDispatcherTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.FromResult(new HttpResponseMessage(statusCode));
+        }
+    }
+
+    private sealed class FaultingAndBlockingTransport : IWebhookDeliveryTransport
+    {
+        private readonly TaskCompletionSource blockingStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource blockingCanceled = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task BlockingStarted => blockingStarted.Task;
+
+        public Task BlockingCanceled => blockingCanceled.Task;
+
+        public Task<WebhookDeliveryResult> SendAsync(
+            WebhookMessage message,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.Equals(message.Id, "a-fault", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("transport failure");
+            }
+
+            return BlockAsync(cancellationToken);
+        }
+
+        private async Task<WebhookDeliveryResult> BlockAsync(CancellationToken cancellationToken)
+        {
+            blockingStarted.TrySetResult();
+
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                blockingCanceled.TrySetResult();
+                throw;
+            }
+
+            throw new InvalidOperationException("The blocking transport completed unexpectedly.");
         }
     }
 
