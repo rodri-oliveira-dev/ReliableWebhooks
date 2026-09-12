@@ -19,6 +19,7 @@ F:public static literal ReliableWebhooks.WebhookEnqueueStatus ReliableWebhooks.W
 F:public static literal ReliableWebhooks.WebhookRetryAction ReliableWebhooks.WebhookRetryAction.DeadLetter value=1
 F:public static literal ReliableWebhooks.WebhookRetryAction ReliableWebhooks.WebhookRetryAction.Retry value=0
 F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.DestinationPolicyDenied value=3
+F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.InsecureHttpDenied value=4
 F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.Network value=1
 F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.None value=0
 F:public static literal ReliableWebhooks.WebhookTransportFailureKind ReliableWebhooks.WebhookTransportFailureKind.Timeout value=2
@@ -97,6 +98,7 @@ M:public instance specialname calling=Standard, HasThis System.Boolean ReliableW
 M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookDeliverySnapshot.get_IsTerminal()
 M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookDestinationPolicyResult.get_IsAllowed()
 M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookEnqueueResult.get_WasEnqueued()
+M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookHttpTransportOptions.get_AllowInsecureHttp()
 M:public instance specialname calling=Standard, HasThis System.Boolean ReliableWebhooks.WebhookRetryDecision.get_ShouldRetry()
 M:public instance specialname calling=Standard, HasThis System.Collections.Generic.IReadOnlyDictionary`2<System.String,System.String> nullable=notnull<notnull,notnull> ReliableWebhooks.WebhookMessage.get_Headers()
 M:public instance specialname calling=Standard, HasThis System.Collections.Generic.IReadOnlyList`1<ReliableWebhooks.DeliveryAttempt> nullable=notnull<notnull> ReliableWebhooks.WebhookDelivery.get_Attempts()
@@ -148,6 +150,7 @@ M:public instance specialname calling=Standard, HasThis System.Void ReliableWebh
 M:public instance specialname calling=Standard, HasThis System.Void ReliableWebhooks.WebhookDispatcherOptions.set_PollInterval(System.TimeSpan)
 M:public instance specialname calling=Standard, HasThis System.Void ReliableWebhooks.WebhookDispatcherOptions.set_ShutdownGracePeriod(System.TimeSpan)
 M:public instance specialname calling=Standard, HasThis System.Void ReliableWebhooks.WebhookDispatcherOptions.set_TimeProvider(System.TimeProvider nullable=notnull)
+M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookHttpTransportOptions.set_AllowInsecureHttp(System.Boolean)
 M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookHttpTransportOptions.set_AttemptTimeout(System.TimeSpan)
 M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookHttpTransportOptions.set_DestinationPolicy(ReliableWebhooks.IWebhookDestinationPolicy nullable=nullable)
 M:public instance specialname calling=Standard, HasThis modreq(System.Runtime.CompilerServices.IsExternalInit) System.Void ReliableWebhooks.WebhookHttpTransportOptions.set_MaxResponseBodyBytes(System.Int32)
@@ -208,6 +211,7 @@ P:System.Boolean ReliableWebhooks.WebhookDeliveryResult.ResponseBodyTruncated[] 
 P:System.Boolean ReliableWebhooks.WebhookDeliverySnapshot.IsTerminal[] accessors=[get:public:instance]
 P:System.Boolean ReliableWebhooks.WebhookDestinationPolicyResult.IsAllowed[] accessors=[get:public:instance]
 P:System.Boolean ReliableWebhooks.WebhookEnqueueResult.WasEnqueued[] accessors=[get:public:instance]
+P:System.Boolean ReliableWebhooks.WebhookHttpTransportOptions.AllowInsecureHttp[] accessors=[get:public:instance,set:public:instance]
 P:System.Boolean ReliableWebhooks.WebhookRetryDecision.ShouldRetry[] accessors=[get:public:instance]
 P:System.Collections.Generic.IReadOnlyDictionary`2<System.String,System.String> nullable=notnull<notnull,notnull> ReliableWebhooks.WebhookMessage.Headers[] accessors=[get:public:instance]
 P:System.Collections.Generic.IReadOnlyList`1<ReliableWebhooks.DeliveryAttempt> nullable=notnull<notnull> ReliableWebhooks.WebhookDelivery.Attempts[] accessors=[get:public:instance]

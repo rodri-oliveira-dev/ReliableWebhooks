@@ -165,6 +165,46 @@ public sealed class WebhookHttpTransportTests
     }
 
     [Fact]
+    public async Task SendAsyncRejectsPlainHttpByDefaultWithoutSending()
+    {
+        DelegateHandler handler = new(
+            static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(client);
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(destination: new Uri("http://example.test/webhooks")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.PermanentFailure, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.InsecureHttpDenied, result.FailureKind);
+        Assert.Null(result.StatusCode);
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncAllowsPlainHttpWhenExplicitlyConfigured()
+    {
+        DelegateHandler handler = new(
+            static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(
+            client,
+            options: new WebhookHttpTransportOptions
+            {
+                AllowInsecureHttp = true,
+            });
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(destination: new Uri("http://127.0.0.1/webhooks")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.None, result.FailureKind);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
     public async Task SendAsyncBoundsCapturedResponseBody()
     {
         byte[] responseBody = [1, 2, 3, 4, 5, 6];
@@ -219,12 +259,13 @@ public sealed class WebhookHttpTransportTests
 
     private static WebhookMessage CreateMessage(
         string contentType = "application/json",
-        IReadOnlyDictionary<string, string>? headers = null)
+        IReadOnlyDictionary<string, string>? headers = null,
+        Uri? destination = null)
     {
         return new WebhookMessage(
             "webhook-123",
             "order.created",
-            new Uri("https://example.test/webhooks"),
+            destination ?? new Uri("https://example.test/webhooks"),
             new byte[] { 1, 2, 3 },
             contentType,
             headers);

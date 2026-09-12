@@ -78,6 +78,67 @@ public sealed class DependencyInjectionTests
     }
 
     [Fact]
+    public async Task DefaultTransportRejectsPlainHttpDestinationThroughDependencyInjection()
+    {
+        ServiceCollection services = new();
+        IHttpClientFactory httpClientFactory = Substitute.For<IHttpClientFactory>();
+        SuccessHandler handler = new();
+        httpClientFactory
+            .CreateClient(Arg.Any<string>())
+            .Returns(_ => new HttpClient(handler, disposeHandler: false)
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+            });
+        services.AddSingleton(httpClientFactory);
+
+        _ = services.AddReliableWebhooks();
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookDeliveryTransport transport = provider.GetRequiredService<IWebhookDeliveryTransport>();
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage("factory-http-denied", new Uri("http://example.test/webhooks")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.PermanentFailure, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.InsecureHttpDenied, result.FailureKind);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task DefaultTransportAllowsPlainHttpDestinationWhenExplicitlyConfigured()
+    {
+        ServiceCollection services = new();
+        IHttpClientFactory httpClientFactory = Substitute.For<IHttpClientFactory>();
+        SuccessHandler handler = new();
+        httpClientFactory
+            .CreateClient(Arg.Any<string>())
+            .Returns(_ => new HttpClient(handler, disposeHandler: false)
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+            });
+        services.AddSingleton(httpClientFactory);
+
+        _ = services.AddReliableWebhooks(options =>
+        {
+            options.Transport = new WebhookHttpTransportOptions
+            {
+                AllowInsecureHttp = true,
+            };
+        });
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookDeliveryTransport transport = provider.GetRequiredService<IWebhookDeliveryTransport>();
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage("factory-http-allowed", new Uri("http://127.0.0.1/webhooks")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
     public async Task DefaultHttpClientDoesNotLogSecretBearingRequestUriOrHeaders()
     {
         const string pathSecret = "path-secret-sentinel";
@@ -268,12 +329,12 @@ public sealed class DependencyInjectionTests
             cancellation.Token));
     }
 
-    private static WebhookMessage CreateMessage(string id)
+    private static WebhookMessage CreateMessage(string id, Uri? destination = null)
     {
         return new WebhookMessage(
             id,
             "order.created",
-            new Uri("https://example.test/webhooks"),
+            destination ?? new Uri("https://example.test/webhooks"),
             "{}"u8.ToArray(),
             "application/json");
     }

@@ -24,4 +24,9 @@ public enum WebhookTransportFailureKind
     /// The configured destination policy denied the outbound request before it was sent.
     /// </summary>
     DestinationPolicyDenied = 3,
+
+    /// <summary>
+    /// The transport rejected a plaintext HTTP destination because insecure HTTP was not explicitly allowed.
+    /// </summary>
+    InsecureHttpDenied = 4,
 }

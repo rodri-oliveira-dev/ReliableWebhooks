@@ -19,7 +19,7 @@ Run it from the repository root:
 dotnet run --project samples/ReliableWebhooks.Sample
 ```
 
-The sample listens only on `http://127.0.0.1:5080`, sends three webhooks to its own local receiver endpoints, prints diagnostic events and final states, and then stops automatically.
+The sample listens only on `http://127.0.0.1:5080`, explicitly sets `AllowInsecureHttp = true` for that loopback development endpoint, sends three webhooks to its own local receiver endpoints, prints diagnostic events and final states, and then stops automatically.
 
 Expected terminal states are:
 

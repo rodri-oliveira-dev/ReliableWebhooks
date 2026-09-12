@@ -34,6 +34,20 @@ public sealed class WebhookHttpTransportOptions
     } = 16 * 1024;
 
     /// <summary>
+    /// Gets a value indicating whether plaintext HTTP webhook destinations are allowed.
+    /// </summary>
+    /// <remarks>
+    /// The default is <see langword="false"/>. HTTPS is required by default because HMAC signing does
+    /// not provide confidentiality or server authentication. Set this to <see langword="true"/> only for
+    /// deliberate development, loopback, or otherwise trusted plaintext HTTP scenarios.
+    /// </remarks>
+    public bool AllowInsecureHttp
+    {
+        get;
+        init;
+    }
+
+    /// <summary>
     /// Gets the optional policy used to authorize destinations before an outbound request is sent.
     /// </summary>
     /// <remarks>

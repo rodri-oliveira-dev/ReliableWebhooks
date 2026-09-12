@@ -342,6 +342,7 @@ OpenTelemetry consumers can register the activity source and meter in their own 
 | `Retry.JitterFactor` | `0.2` | Finite number from `0` through `1` |
 | `Transport.AttemptTimeout` | `30 seconds` | Positive duration or `Timeout.InfiniteTimeSpan` |
 | `Transport.MaxResponseBodyBytes` | `16 KiB` | Zero or greater |
+| `Transport.AllowInsecureHttp` | `false` | Set `true` only for deliberate development, loopback, or trusted plaintext HTTP scenarios |
 | `Transport.DestinationPolicy` | `null` | Configure for untrusted or tenant-provided webhook URLs |
 | Signing header names | `X-Webhook-*` defaults | Non-empty and unique, case-insensitively |
 | Signing time provider | `TimeProvider.System` | Non-null |
@@ -355,6 +356,8 @@ Invalid options fail during host startup with actionable validation messages.
 ## Destination security and SSRF boundary
 
 ReliableWebhooks treats destinations as operator-trusted by default. The `WebhookMessage` constructor verifies only that the destination is an absolute HTTP or HTTPS URI; it does not decide whether a tenant, user, imported subscriber record, or other partially trusted source should be allowed to make the application send traffic to that network location.
+
+The HTTP transport requires HTTPS destinations by default. Plaintext `http://` returns a permanent `WebhookTransportFailureKind.InsecureHttpDenied` result before sending bytes unless `WebhookHttpTransportOptions.AllowInsecureHttp` is set to `true`. Use that opt-in only for local development, loopback receivers, or a deliberately trusted private network. HMAC signing does not provide confidentiality, does not authenticate the remote server, and does not replace TLS. Production deployments should use platform-secure TLS defaults, TLS 1.2 or newer, and must not disable certificate validation to work around endpoint misconfiguration.
 
 When webhook destinations are tenant-configurable or otherwise untrusted, configure `WebhookHttpTransportOptions.DestinationPolicy`:
 

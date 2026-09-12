@@ -24,6 +24,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
     private readonly IWebhookHttpResponseClassifier classifier;
     private readonly TimeSpan attemptTimeout;
     private readonly int maxResponseBodyBytes;
+    private readonly bool allowInsecureHttp;
     private readonly IWebhookDestinationPolicy? destinationPolicy;
     private readonly IWebhookRequestSigner? signer;
     private readonly WebhookSigningOptions signingOptions;
@@ -104,6 +105,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         this.classifier = classifier ?? new DefaultWebhookHttpResponseClassifier();
         attemptTimeout = options.AttemptTimeout;
         maxResponseBodyBytes = options.MaxResponseBodyBytes;
+        allowInsecureHttp = options.AllowInsecureHttp;
         destinationPolicy = options.DestinationPolicy;
         this.signer = signer;
         signingOptions = options.Signing;
@@ -133,6 +135,12 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
 
         try
         {
+            if (!allowInsecureHttp
+                && string.Equals(message.Destination.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            {
+                return WebhookDeliveryResult.InsecureHttpDenied();
+            }
+
             if (destinationPolicy is not null)
             {
                 WebhookDestinationPolicyResult destinationAuthorization = await destinationPolicy
