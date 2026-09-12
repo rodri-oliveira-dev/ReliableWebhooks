@@ -4,9 +4,9 @@
 
 ReliableWebhooks is a .NET 10 library for building reliable outbound webhook delivery.
 
-It provides composable primitives for stable webhook identities, persistence and lease coordination, bounded concurrent dispatching, one-attempt HTTP delivery, HMAC-SHA256 request signing, response classification, deterministic retry scheduling, and backend-neutral observability. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
+It provides composable primitives for stable webhook identities, persistence and lease coordination, bounded concurrent dispatching, one-attempt HTTP delivery, HMAC-SHA256 request signing, response classification, deterministic retry scheduling, backend-neutral observability, and standard .NET dependency-injection/hosting integration. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
 
-> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives, concurrent dispatcher, signing, and observability described below; the built-in durable store and dependency-injection integration are still part of the work required before the first public release.
+> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives, concurrent dispatcher, signing, observability, dependency injection, and optional hosted-dispatcher integration described below; the built-in durable store is still part of the work required before the first public release.
 
 ## Why ReliableWebhooks?
 
@@ -24,6 +24,7 @@ ReliableWebhooks addresses those concerns by separating the delivery workflow in
 - transport-neutral success, retryable-failure, and permanent-failure outcomes;
 - a retry policy that calculates the next attempt without sleeping or blocking a worker;
 - structured logs, traces, and metrics built on standard .NET diagnostics APIs;
+- standard Microsoft DI and Generic Host integration with an optional hosted dispatcher;
 - replaceable abstractions for persistence, transport, dispatch timing, signing, classification, and retry behavior.
 
 ## How it works
@@ -31,7 +32,7 @@ ReliableWebhooks addresses those concerns by separating the delivery workflow in
 A ReliableWebhooks delivery is designed around a small state machine rather than a fire-and-forget HTTP call:
 
 1. Create a `WebhookMessage` with a stable ID, event type, destination, exact payload bytes, content type, and optional headers.
-2. Enqueue it through `IWebhookDeliveryStore`. Duplicate enqueue attempts with the same stable ID are deterministic. Wrap the store with `InstrumentedWebhookDeliveryStore` when enqueue logs and the queued metric are required independently of the persistence implementation.
+2. Enqueue it through `IWebhookDeliveryStore` or the application-facing `IWebhookEnqueueService`. Duplicate enqueue attempts with the same stable ID are deterministic. Wrap the store with `InstrumentedWebhookDeliveryStore` when enqueue logs and the queued metric are required independently of the persistence implementation.
 3. `WebhookDispatcher` atomically claims due deliveries up to its available concurrency slots and receives expiring `WebhookDeliveryLease` instances.
 4. `WebhookHttpTransport` performs one HTTP `POST` per claimed delivery; when a signer is configured, it signs the exact payload buffer used by the request and adds the delivery identity, event type, timestamp, and signature headers.
 5. The transport returns a `WebhookDeliveryResult` with a transport-neutral outcome.
@@ -109,6 +110,42 @@ await dispatcher.RunAsync(stoppingToken);
 `WebhookDispatcher` does not create unbounded work: it claims at most the number of currently available concurrency slots. On shutdown it stops new claims, lets in-flight deliveries finish during the configured grace period, and then cancels remaining attempts. Canceled work is not marked successful; its lease can expire and be reclaimed later.
 
 `InMemoryWebhookDeliveryStore` is process-local and **not durable**. It exists for tests and samples only and must not be used as production persistence.
+
+### Dependency injection and hosted dispatcher
+
+Applications using the .NET Generic Host can register the standard integration through `AddReliableWebhooks`. A production application must register its own `IWebhookDeliveryStore`; ReliableWebhooks intentionally does not select the non-durable in-memory store as a production default.
+
+```csharp
+services.AddSingleton<IWebhookDeliveryStore, MyDurableWebhookStore>();
+
+ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
+{
+    options.Dispatcher.MaxConcurrency = 8;
+    options.Dispatcher.LeaseDuration = TimeSpan.FromMinutes(2);
+    options.Dispatcher.PollInterval = TimeSpan.FromSeconds(1);
+    options.Transport = new WebhookHttpTransportOptions
+    {
+        AttemptTimeout = TimeSpan.FromSeconds(30),
+    };
+});
+
+webhooks.AddHostedDispatcher();
+```
+
+`AddHostedDispatcher()` is opt-in. Without it, applications can resolve and run `WebhookDispatcher` themselves. The default transport uses `IHttpClientFactory`, disables automatic redirects, and sets `HttpClient.Timeout` to infinite so `WebhookHttpTransportOptions.AttemptTimeout` remains the authoritative per-attempt timeout. Additional handlers or client configuration can be added through `ReliableWebhooksBuilder.HttpClientBuilder`.
+
+The default response classifier, retry policy, transport, and dispatcher are registered with replaceable DI registrations. Stores and signers are application-provided, and dispatcher timing or retry jitter abstractions can also be replaced. Invalid dispatcher, retry, transport, or signing options are validated when options are resolved and by Generic Host startup validation.
+
+Application code can enqueue without depending directly on persistence scheduling details:
+
+```csharp
+IWebhookEnqueueService webhookEnqueue =
+    serviceProvider.GetRequiredService<IWebhookEnqueueService>();
+
+await webhookEnqueue.EnqueueAsync(message, cancellationToken);
+```
+
+The integration depends only on `Microsoft.Extensions.*`; it does not require ASP.NET Core.
 
 ### Signing webhooks
 
@@ -255,7 +292,7 @@ The application can then add OTLP, Azure Monitor, Prometheus, Grafana/Tempo, Dat
 | Jitter | 0 to 20% positive jitter before the maximum-delay cap |
 | `Retry-After` | Honored when it schedules later than the local retry delay, capped by the configured maximum delay |
 
-Automatic redirects must be disabled on the `HttpClient` handler so a single transport invocation cannot silently become multiple HTTP requests or change the request method.
+Automatic redirects must be disabled on the `HttpClient` handler so a single transport invocation cannot silently become multiple HTTP requests or change the request method. The default DI-managed client configures this automatically.
 
 Malformed `Retry-After` values are ignored. Valid delta-seconds and HTTP-date values are exposed through `WebhookDeliveryResult` and consumed by the default retry policy.
 
@@ -274,7 +311,7 @@ ReliableWebhooks is designed around explicit delivery semantics:
 - **Telemetry is backend-neutral.** Logs, traces, and metrics use standard .NET APIs; exporters remain an application concern.
 - **Persistence is replaceable.** The core package does not depend on a specific database provider.
 
-The current development version does not yet include the production durable EF Core store or dependency-injection/hosted-service integration planned for v0.1.0.
+The current development version does not yet include the production durable EF Core store planned for v0.1.0.
 
 ## Extensibility
 
@@ -282,6 +319,7 @@ The main behaviors are exposed through public abstractions:
 
 - `IWebhookDeliveryStore` — persistence and lease coordination;
 - `InstrumentedWebhookDeliveryStore` — persistence decorator that adds enqueue logs and the queued metric to any store implementation;
+- `IWebhookEnqueueService` — application-facing enqueue API registered by the DI integration;
 - `IWebhookDeliveryTransport` — one-attempt delivery transport used by the dispatcher;
 - `IWebhookDispatcherDelay` — replaceable polling/grace-period timing for deterministic tests or custom scheduling;
 - `IWebhookHttpResponseClassifier` — HTTP response classification;
@@ -291,9 +329,9 @@ The main behaviors are exposed through public abstractions:
 - `IWebhookSigningSecretProvider` — per-message signing secret resolution;
 - `ReliableWebhooksInstrumentation` — stable public diagnostics names for tracing and metrics integration.
 
-`WebhookDispatcherOptions` also exposes `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod`, and `TimeProvider` so concurrency and timing remain configurable and testable.
+`ReliableWebhooksOptions` groups dispatcher, retry, transport, and signing configuration for DI consumers. `WebhookDispatcherOptions` exposes `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod`, and `TimeProvider` so concurrency and timing remain configurable and testable.
 
-This keeps persistence, dispatching, transport behavior, signing, retry strategy, and telemetry backend selection independently replaceable and testable.
+This keeps persistence, dispatching, transport behavior, signing, retry strategy, hosting, and telemetry backend selection independently replaceable and testable.
 
 ## Support and contribution
 
