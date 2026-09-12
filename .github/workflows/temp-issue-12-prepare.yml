@@ -1,0 +1,59 @@
+name: Temporary issue 12 preparation
+
+on:
+  push:
+    branches:
+      - feature/issue-12-end-to-end-sample-docs
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Generate lock files through restore
+        run: dotnet restore ReliableWebhooks.slnx --force-evaluate
+
+      - name: Add sample links to READMEs
+        shell: python
+        run: |
+          from pathlib import Path
+
+          replacements = {
+              "README.md": (
+                  "For the full persistence contract and conformance guidance, see [`docs/persistence.md`](docs/persistence.md).",
+                  "For the full persistence contract and conformance guidance, see [`docs/persistence.md`](docs/persistence.md).\n\nA runnable end-to-end sample is available in [`samples/ReliableWebhooks.Sample`](samples/ReliableWebhooks.Sample). For production integration, configuration, receiver idempotency, signing verification, and troubleshooting, see [`docs/production-usage.md`](docs/production-usage.md).",
+              ),
+              "README.pt-BR.md": (
+                  "Para o contrato completo de persistência e as orientações de conformidade, consulte [`docs/persistence.pt-BR.md`](docs/persistence.pt-BR.md).",
+                  "Para o contrato completo de persistência e as orientações de conformidade, consulte [`docs/persistence.pt-BR.md`](docs/persistence.pt-BR.md).\n\nUm exemplo end-to-end executável está disponível em [`samples/ReliableWebhooks.Sample`](samples/ReliableWebhooks.Sample). Para integração em produção, configuração, idempotência do receiver, verificação de assinatura e troubleshooting, consulte [`docs/production-usage.md`](docs/production-usage.md).",
+              ),
+          }
+
+          for file_name, (old, new) in replacements.items():
+              path = Path(file_name)
+              text = path.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"Expected README marker not found in {file_name}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+
+      - name: Commit generated and documentation changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md README.pt-BR.md samples/ReliableWebhooks.Sample/packages.lock.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "chore: finalize sample restore and readme guidance"
+          git push
