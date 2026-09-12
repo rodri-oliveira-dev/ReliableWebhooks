@@ -16,7 +16,7 @@ jobs:
       - name: Checkout validated commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Patch verifier analyzer settings
+      - name: Patch verifier analyzer settings and dependency resolution
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -28,11 +28,59 @@ jobs:
                   '#:property RestorePackagesWithLockFile=false\n#:property EnableTrimAnalyzer=false\n',
                   1,
               )
-          text = text.replace(
-              '\nsealed class SnapshotLoadContext : AssemblyLoadContext\n',
-              '\ninternal sealed class SnapshotLoadContext : AssemblyLoadContext\n',
-              1,
-          )
+
+          class_start = text.index('sealed class SnapshotLoadContext : AssemblyLoadContext')
+          replacement = '''internal sealed class SnapshotLoadContext : AssemblyLoadContext
+          {
+              private readonly string assemblyDirectory;
+              private readonly string nugetPackagesDirectory;
+
+              public SnapshotLoadContext(string assemblyPath)
+                  : base(isCollectible: true)
+              {
+                  assemblyDirectory = Path.GetDirectoryName(assemblyPath)
+                      ?? throw new ArgumentException("Assembly path must have a directory.", nameof(assemblyPath));
+                  nugetPackagesDirectory = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
+                      ?? Path.Combine(
+                          Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                          ".nuget",
+                          "packages");
+              }
+
+              protected override Assembly? Load(AssemblyName assemblyName)
+              {
+                  if (string.IsNullOrWhiteSpace(assemblyName.Name))
+                  {
+                      return null;
+                  }
+
+                  string localCandidate = Path.Combine(assemblyDirectory, $"{assemblyName.Name}.dll");
+                  if (File.Exists(localCandidate))
+                  {
+                      return LoadFromAssemblyPath(localCandidate);
+                  }
+
+                  string packageRoot = Path.Combine(
+                      nugetPackagesDirectory,
+                      assemblyName.Name.ToLowerInvariant());
+                  if (!Directory.Exists(packageRoot))
+                  {
+                      return null;
+                  }
+
+                  string librarySegment = $"{Path.DirectorySeparatorChar}lib{Path.DirectorySeparatorChar}";
+                  string? packageCandidate = Directory
+                      .EnumerateFiles(packageRoot, $"{assemblyName.Name}.dll", SearchOption.AllDirectories)
+                      .OrderByDescending(
+                          candidate => candidate.Contains(librarySegment, StringComparison.Ordinal))
+                      .ThenByDescending(static candidate => candidate, StringComparer.Ordinal)
+                      .FirstOrDefault();
+
+                  return packageCandidate is null ? null : LoadFromAssemblyPath(packageCandidate);
+              }
+          }
+          '''.replace('          ', '')
+          text = text[:class_start] + replacement
           path.write_text(text, encoding='utf-8', newline='\n')
           PY
 
