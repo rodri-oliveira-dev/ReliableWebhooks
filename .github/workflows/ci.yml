@@ -199,6 +199,22 @@ jobs:
       - name: Compilar
         run: dotnet build ReliableWebhooks.slnx --configuration Release --no-restore
 
+      - name: Executar sample end-to-end
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_file="$(mktemp)"
+          timeout 30s dotnet run \
+            --project samples/ReliableWebhooks.Sample/ReliableWebhooks.Sample.csproj \
+            --configuration Release \
+            --no-build \
+            --no-restore \
+            | tee "$output_file"
+
+          grep -Fq 'sample-success: Succeeded after 1 attempt(s)' "$output_file"
+          grep -Fq 'sample-retry: Succeeded after 2 attempt(s)' "$output_file"
+          grep -Fq 'sample-dead-letter: DeadLettered after 3 attempt(s)' "$output_file"
+
       - name: Executar testes com MTP
         run: dotnet test ReliableWebhooks.slnx --configuration Release --no-build
 
