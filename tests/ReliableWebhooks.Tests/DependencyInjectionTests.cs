@@ -45,6 +45,38 @@ public sealed class DependencyInjectionTests
     }
 
     [Fact]
+    public async Task DefaultTransportCreatesHttpClientForEachDeliveryAttempt()
+    {
+        ServiceCollection services = new();
+        IHttpClientFactory httpClientFactory = Substitute.For<IHttpClientFactory>();
+        SuccessHandler handler = new();
+        httpClientFactory
+            .CreateClient(Arg.Any<string>())
+            .Returns(_ => new HttpClient(handler, disposeHandler: false)
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+            });
+        services.AddSingleton(httpClientFactory);
+
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks();
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookDeliveryTransport transport = provider.GetRequiredService<IWebhookDeliveryTransport>();
+
+        WebhookDeliveryResult first = await transport.SendAsync(
+            CreateMessage("factory-attempt-1"),
+            TestContext.Current.CancellationToken);
+        WebhookDeliveryResult second = await transport.SendAsync(
+            CreateMessage("factory-attempt-2"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, first.Outcome);
+        Assert.Equal(WebhookDeliveryOutcome.Success, second.Outcome);
+        Assert.Equal(2, handler.RequestCount);
+        httpClientFactory.Received(2).CreateClient(builder.HttpClientBuilder.Name);
+    }
+
+    [Fact]
     public async Task HostedDispatcherDeliversEnqueuedWebhookThroughConfiguredHttpClient()
     {
         ServiceCollection services = new();
