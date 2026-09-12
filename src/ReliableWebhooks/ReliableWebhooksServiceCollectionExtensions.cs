@@ -69,15 +69,14 @@ public static class ReliableWebhooksServiceCollectionExtensions
     private static IWebhookDeliveryTransport CreateTransport(IServiceProvider serviceProvider)
     {
         ReliableWebhooksOptions options = GetOptions(serviceProvider);
-        HttpClient client = serviceProvider
-            .GetRequiredService<IHttpClientFactory>()
-            .CreateClient(DefaultHttpClientName);
+        IHttpClientFactory httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
         IWebhookHttpResponseClassifier classifier =
             serviceProvider.GetRequiredService<IWebhookHttpResponseClassifier>();
         IWebhookRequestSigner? signer = serviceProvider.GetService<IWebhookRequestSigner>();
 
-        return new WebhookHttpTransport(
-            client,
+        return new HttpClientFactoryWebhookDeliveryTransport(
+            httpClientFactory,
+            DefaultHttpClientName,
             classifier,
             options.Transport,
             signer);
