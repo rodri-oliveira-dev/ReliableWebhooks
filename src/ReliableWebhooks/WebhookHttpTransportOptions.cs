@@ -32,4 +32,13 @@ public sealed class WebhookHttpTransportOptions
         get;
         init;
     } = 16 * 1024;
+
+    /// <summary>
+    /// Gets the header names and time source used when a request signer is configured.
+    /// </summary>
+    public WebhookSigningOptions Signing
+    {
+        get;
+        init;
+    } = new();
 }
