@@ -26,6 +26,8 @@ To include NuGet.org in the v0.1.0 publication and satisfy the NuGet.org distrib
 
 ## Release procedure
 
+The `main` branch ruleset requires the stable gates named `CI`, `CodeQL`, and `Dependency Review` to pass before merge. Release candidates must come from a `main` commit that satisfied those enforced checks. The release dry-run workflow is path-filtered to release/package-relevant files and is therefore not configured as a required status check; when it runs, its failures are release blockers for the affected change.
+
 From GitHub Actions, run the `Release` workflow on `main` with:
 
 - `version`: `0.1.0`;
