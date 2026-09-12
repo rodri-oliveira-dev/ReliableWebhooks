@@ -15,7 +15,7 @@ namespace ReliableWebhooks;
 /// automatic redirects disabled. This keeps the transport compatible with factory-created clients without
 /// taking a dependency on the dependency-injection packages that provide that factory.
 /// </remarks>
-public sealed class WebhookHttpTransport
+public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
 {
     private const int ReadBufferSize = 8 * 1024;
 
