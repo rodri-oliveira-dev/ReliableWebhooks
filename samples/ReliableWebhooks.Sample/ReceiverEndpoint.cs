@@ -110,7 +110,7 @@ internal static class ReceiverEndpoint
         }
     }
 
-    private static string? GetSignedWebhookId(ReadOnlySpan<byte> payload)
+    private static string? GetSignedWebhookId(ReadOnlyMemory<byte> payload)
     {
         try
         {
