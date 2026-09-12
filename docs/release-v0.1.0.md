@@ -4,10 +4,10 @@ This document records the release contract for the first public ReliableWebhooks
 
 ## Distribution
 
-The official release workflow validates one immutable `.nupkg` and uses that validated artifact for the configured distribution targets:
+The official release workflow validates one immutable `.nupkg` and its matching `.snupkg`, then uses those validated artifacts for the configured distribution targets:
 
 - GitHub Packages using the scoped `GITHUB_TOKEN`;
-- GitHub Releases as an attached artifact together with symbols, manifest, and checksums;
+- GitHub Releases as attached package, symbols, manifest, and checksum artifacts;
 - optionally, NuGet.org using GitHub OIDC and NuGet Trusted Publishing when `NUGET_USER` is configured.
 
 No long-lived NuGet API key is stored by the repository.
@@ -33,7 +33,9 @@ From GitHub Actions, run the `Release` workflow on `main` with:
 - `version`: `0.1.0`;
 - `publish`: `true`.
 
-The workflow validates SemVer, the exact `main` SHA, restore/build/tests, the v0.1.0 public API signature snapshot, package metadata, Source Link, symbols, a clean custom-store consumer, manifest, checksums, and artifact attestation. It then creates or revalidates tag `v0.1.0` at the exact validated SHA before any registry publication. NuGet.org is published only when `NUGET_USER` enables Trusted Publishing; GitHub Packages is always published for an official release. The GitHub Release is created and published only after the enabled registry publications succeed.
+The workflow validates SemVer, the exact `main` SHA, restore/build/tests, the v0.1.0 public API signature snapshot, package metadata, Source Link, symbol package identity/version, a clean custom-store consumer, manifest, checksums, and artifact attestation. It then creates or revalidates tag `v0.1.0` at the exact validated SHA before any registry publication. NuGet.org is published only when `NUGET_USER` enables Trusted Publishing; GitHub Packages is always published for an official release. The GitHub Release is created and published only after the enabled registry publications succeed.
+
+`release-manifest.json` records the package filename/SHA-256 and symbol-package filename/SHA-256 for the validated commit. `SHA256SUMS` is deterministic and contains one line each for the `.nupkg`, `.snupkg`, and `release-manifest.json` in that order. The publish job downloads the previously validated artifact set, re-verifies both package hashes through `scripts/release-candidate.cs`, attests the `.nupkg`, `.snupkg`, manifest, and checksum file, and uploads only that verified artifact set to the GitHub Release. The registry publication path continues to push the primary `.nupkg` only; no rebuild occurs in the publish job.
 
 Re-running the same version is recoverable only when the existing tag resolves to the same validated SHA. Registry pushes use duplicate-safe behavior; a tag pointing to another SHA is rejected before external publication. This prevents a retry from associating an already-published package version with a newer commit.
 

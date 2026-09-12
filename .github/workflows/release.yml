@@ -222,6 +222,7 @@ jobs:
           --commit "$GITHUB_SHA"
           --package-id "$PACKAGE_ID"
           --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --symbols "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
           --output artifacts/release/release-manifest.json
           --checksums-output artifacts/release/SHA256SUMS
 
@@ -307,6 +308,7 @@ jobs:
           --commit "${{ needs.build.outputs.commit }}"
           --package-id "$PACKAGE_ID"
           --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --symbols "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
           --manifest artifacts/release/release-manifest.json
           --checksums artifacts/release/SHA256SUMS
 
@@ -315,6 +317,7 @@ jobs:
         with:
           subject-path: |
             artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.nupkg
+            artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.snupkg
             artifacts/release/release-manifest.json
             artifacts/release/SHA256SUMS
 
