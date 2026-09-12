@@ -31,7 +31,7 @@ ReliableWebhooks addresses those concerns by separating the delivery workflow in
 A ReliableWebhooks delivery is designed around a small state machine rather than a fire-and-forget HTTP call:
 
 1. Create a `WebhookMessage` with a stable ID, event type, destination, exact payload bytes, content type, and optional headers.
-2. Enqueue it through `IWebhookDeliveryStore`. Duplicate enqueue attempts with the same stable ID are deterministic.
+2. Enqueue it through `IWebhookDeliveryStore`. Duplicate enqueue attempts with the same stable ID are deterministic. Wrap the store with `InstrumentedWebhookDeliveryStore` when enqueue logs and the queued metric are required independently of the persistence implementation.
 3. `WebhookDispatcher` atomically claims due deliveries up to its available concurrency slots and receives expiring `WebhookDeliveryLease` instances.
 4. `WebhookHttpTransport` performs one HTTP `POST` per claimed delivery; when a signer is configured, it signs the exact payload buffer used by the request and adds the delivery identity, event type, timestamp, and signature headers.
 5. The transport returns a `WebhookDeliveryResult` with a transport-neutral outcome.
@@ -78,7 +78,8 @@ var message = new WebhookMessage(
     payload: payload,
     contentType: "application/json");
 
-IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore();
+IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+    new InMemoryWebhookDeliveryStore());
 await store.EnqueueAsync(message, DateTimeOffset.UtcNow);
 
 using var handler = new HttpClientHandler
@@ -167,12 +168,16 @@ The same class exposes stable names for the delivery-attempt activity and the pu
 
 ### Structured logs
 
-`WebhookDispatcher` has an additive constructor overload that accepts `ILogger`. Existing constructors remain valid and use a no-op logger. The in-memory store also accepts an optional `ILogger` for enqueue lifecycle events.
+`WebhookDispatcher` has an additive constructor overload that accepts `ILogger`. Existing constructors remain valid and use a no-op logger. Enqueue telemetry is provided by `InstrumentedWebhookDeliveryStore`, a decorator that can wrap any `IWebhookDeliveryStore`, including a custom durable production store.
 
 ```csharp
 ILogger logger = loggerFactory.CreateLogger("ReliableWebhooks");
 
-IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore(logger);
+IWebhookDeliveryStore durableStore = GetApplicationWebhookStore();
+IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+    durableStore,
+    logger);
+
 var dispatcher = new WebhookDispatcher(
     store,
     transport,
@@ -181,6 +186,8 @@ var dispatcher = new WebhookDispatcher(
     delay: null,
     logger);
 ```
+
+`InstrumentedWebhookDeliveryStore` emits the enqueue event and queued metric only when a new delivery is actually persisted. Duplicate idempotent enqueue calls do not double-count queued deliveries. Claim telemetry is emitted by `WebhookDispatcher`, so the same claim is logged exactly once and custom stores receive the same lifecycle coverage.
 
 The lifecycle uses stable event IDs for enqueue, claim, attempt start, success, retry scheduling, permanent failure, dead letter, cancellation, lease loss, and unexpected failure. Log properties are structured and deliberately exclude payload bodies, destination URLs/query strings, signing secrets, and signatures.
 
@@ -274,6 +281,7 @@ The current development version does not yet include the production durable EF C
 The main behaviors are exposed through public abstractions:
 
 - `IWebhookDeliveryStore` — persistence and lease coordination;
+- `InstrumentedWebhookDeliveryStore` — persistence decorator that adds enqueue logs and the queued metric to any store implementation;
 - `IWebhookDeliveryTransport` — one-attempt delivery transport used by the dispatcher;
 - `IWebhookDispatcherDelay` — replaceable polling/grace-period timing for deterministic tests or custom scheduling;
 - `IWebhookHttpResponseClassifier` — HTTP response classification;
