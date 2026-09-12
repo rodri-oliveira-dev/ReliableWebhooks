@@ -34,9 +34,7 @@ public sealed class WebhookHttpTransport
     /// </param>
     /// <param name="classifier">An optional classifier that overrides the default HTTP status classification.</param>
     /// <param name="options">Optional transport settings.</param>
-    /// <exception cref="ArgumentNullException">
-    /// <paramref name="httpClient"/> is <see langword="null"/>, or signing options contain a null time provider.
-    /// </exception>
+    /// <exception cref="ArgumentNullException"><paramref name="httpClient"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// The configured timeout is invalid or the response-body byte limit is negative.
     /// </exception>
@@ -54,11 +52,11 @@ public sealed class WebhookHttpTransport
     /// <param name="httpClient">
     /// The HTTP client used to send webhook requests. Its primary handler must have automatic redirects disabled.
     /// </param>
-    /// <param name="classifier">An optional classifier that overrides the default HTTP status classification.</param>
-    /// <param name="options">Optional transport settings.</param>
+    /// <param name="classifier">A classifier that overrides the default HTTP status classification, or <see langword="null"/>.</param>
+    /// <param name="options">Transport settings, or <see langword="null"/> to use defaults.</param>
     /// <param name="signer">
-    /// An optional request signer. When supplied, the transport adds webhook ID, event type, timestamp,
-    /// and signature headers to each request.
+    /// A request signer, or <see langword="null"/> to disable signing. When supplied, the transport adds webhook ID,
+    /// event type, timestamp, and signature headers to each request.
     /// </param>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="httpClient"/> is <see langword="null"/>, or signing options contain a null time provider.
@@ -69,9 +67,9 @@ public sealed class WebhookHttpTransport
     /// </exception>
     public WebhookHttpTransport(
         HttpClient httpClient,
-        IWebhookHttpResponseClassifier? classifier = null,
-        WebhookHttpTransportOptions? options = null,
-        IWebhookRequestSigner? signer = null)
+        IWebhookHttpResponseClassifier? classifier,
+        WebhookHttpTransportOptions? options,
+        IWebhookRequestSigner? signer)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
 
