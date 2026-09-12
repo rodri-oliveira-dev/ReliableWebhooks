@@ -23,7 +23,9 @@ public sealed class WebhookDispatcherTests
         shutdown.Cancel();
         await run;
 
-        WebhookDeliverySnapshot? snapshot = await store.GetAsync("success");
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+            "success",
+            TestContext.Current.CancellationToken);
         Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.Succeeded, snapshot.State);
         Assert.Equal(1, snapshot.AttemptCount);
@@ -52,7 +54,9 @@ public sealed class WebhookDispatcherTests
         shutdown.Cancel();
         await run;
 
-        WebhookDeliverySnapshot? snapshot = await store.GetAsync("retry");
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+            "retry",
+            TestContext.Current.CancellationToken);
         Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.Failed, snapshot.State);
         Assert.Equal(Now.AddMinutes(1), snapshot.NextAttemptAt);
@@ -74,7 +78,9 @@ public sealed class WebhookDispatcherTests
         shutdown.Cancel();
         await run;
 
-        WebhookDeliverySnapshot? snapshot = await store.GetAsync("permanent");
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+            "permanent",
+            TestContext.Current.CancellationToken);
         Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.PermanentlyFailed, snapshot.State);
         Assert.Equal("HTTP 400", snapshot.LastError);
@@ -103,7 +109,9 @@ public sealed class WebhookDispatcherTests
         shutdown.Cancel();
         await run;
 
-        WebhookDeliverySnapshot? snapshot = await store.GetAsync("dead-letter");
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+            "dead-letter",
+            TestContext.Current.CancellationToken);
         Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.DeadLettered, snapshot.State);
         Assert.Equal("HTTP 503", snapshot.LastError);
@@ -115,7 +123,10 @@ public sealed class WebhookDispatcherTests
         InMemoryWebhookDeliveryStore store = new();
         for (int index = 0; index < 4; index++)
         {
-            _ = await store.EnqueueAsync(CreateMessage($"concurrency-{index}"), Now);
+            _ = await store.EnqueueAsync(
+                CreateMessage($"concurrency-{index}"),
+                Now,
+                TestContext.Current.CancellationToken);
         }
 
         BlockingHandler handler = new(expectedStarts: 2);
@@ -196,7 +207,9 @@ public sealed class WebhookDispatcherTests
         handler.Release();
         await run;
 
-        WebhookDeliverySnapshot? snapshot = await store.GetAsync("graceful");
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+            "graceful",
+            TestContext.Current.CancellationToken);
         Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.Succeeded, snapshot.State);
     }
@@ -222,7 +235,9 @@ public sealed class WebhookDispatcherTests
         shutdown.Cancel();
         await run;
 
-        WebhookDeliverySnapshot? snapshot = await store.GetAsync("cancelled");
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+            "cancelled",
+            TestContext.Current.CancellationToken);
         Assert.NotNull(snapshot);
         Assert.Equal(DeliveryState.InProgress, snapshot.State);
         Assert.Equal(1, snapshot.AttemptCount);
@@ -272,7 +287,10 @@ public sealed class WebhookDispatcherTests
     private static async Task<InMemoryWebhookDeliveryStore> CreateStoreAsync(string id)
     {
         InMemoryWebhookDeliveryStore store = new();
-        _ = await store.EnqueueAsync(CreateMessage(id), Now);
+        _ = await store.EnqueueAsync(
+            CreateMessage(id),
+            Now,
+            TestContext.Current.CancellationToken);
         return store;
     }
 
