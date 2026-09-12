@@ -41,6 +41,8 @@ public sealed class InstrumentedWebhookDeliveryStore : IWebhookDeliveryStore
         DateTimeOffset nextAttemptAt,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(message);
+
         WebhookEnqueueResult result = await innerStore
             .EnqueueAsync(message, nextAttemptAt, cancellationToken)
             .ConfigureAwait(false);
