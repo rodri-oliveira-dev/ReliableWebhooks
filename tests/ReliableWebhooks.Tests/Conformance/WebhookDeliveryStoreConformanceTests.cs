@@ -122,6 +122,29 @@ public abstract class WebhookDeliveryStoreConformanceTests
     }
 
     [Fact]
+    public async Task ActiveLeaseRejectsMismatchedToken()
+    {
+        IWebhookDeliveryStore store = CreateStore();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await store.EnqueueAsync(CreateMessage("webhook-1"), Now, cancellationToken);
+
+        WebhookDeliveryLease lease = Assert.Single(
+            await store.ClaimDueAsync(Now, LeaseDuration, 1, cancellationToken));
+        WebhookDeliveryLease mismatched = new(
+            lease.Delivery,
+            Guid.NewGuid(),
+            lease.ExpiresAt);
+
+        await Assert.ThrowsAsync<WebhookDeliveryStoreConcurrencyException>(
+            () => store.MarkSucceededAsync(mismatched, Now.AddSeconds(1), cancellationToken));
+
+        WebhookDeliverySnapshot? snapshot = await store.GetAsync("webhook-1", cancellationToken);
+        Assert.NotNull(snapshot);
+        Assert.Equal(DeliveryState.InProgress, snapshot.State);
+        Assert.Equal(lease.ExpiresAt, snapshot.LeaseExpiresAt);
+    }
+
+    [Fact]
     public async Task ExpiredLeaseCanBeReclaimedAndRejectsStaleOwner()
     {
         IWebhookDeliveryStore store = CreateStore();
@@ -162,6 +185,29 @@ public abstract class WebhookDeliveryStoreConformanceTests
         Assert.Equal(1, renewed.Delivery.AttemptCount);
         Assert.Empty(
             await store.ClaimDueAsync(Now.AddMinutes(1), LeaseDuration, 1, cancellationToken));
+    }
+
+    [Fact]
+    public async Task RenewLeaseDoesNotShortenExistingExpiration()
+    {
+        IWebhookDeliveryStore store = CreateStore();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await store.EnqueueAsync(CreateMessage("webhook-1"), Now, cancellationToken);
+
+        WebhookDeliveryLease lease = Assert.Single(
+            await store.ClaimDueAsync(Now, LeaseDuration, 1, cancellationToken));
+        WebhookDeliveryLease renewed = await store.RenewLeaseAsync(
+            lease,
+            Now.AddSeconds(10),
+            TimeSpan.FromSeconds(20),
+            cancellationToken);
+
+        Assert.Equal(lease.Token, renewed.Token);
+        Assert.Equal(lease.ExpiresAt, renewed.ExpiresAt);
+        Assert.Equal(lease.ExpiresAt, renewed.Delivery.LeaseExpiresAt);
+        Assert.Equal(1, renewed.Delivery.AttemptCount);
+        Assert.Empty(
+            await store.ClaimDueAsync(Now.AddSeconds(59), LeaseDuration, 1, cancellationToken));
     }
 
     [Fact]
@@ -267,6 +313,8 @@ public abstract class WebhookDeliveryStoreConformanceTests
         Assert.True(snapshot.IsTerminal);
         Assert.Null(snapshot.NextAttemptAt);
         Assert.Null(snapshot.LeaseExpiresAt);
+        Assert.Empty(
+            await store.ClaimDueAsync(Now.AddDays(1), LeaseDuration, 1, cancellationToken));
     }
 
     [Fact]
