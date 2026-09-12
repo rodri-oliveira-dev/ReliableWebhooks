@@ -90,7 +90,7 @@ static List<string> BuildSnapshot(MetadataReader reader)
         foreach (MethodDefinitionHandle methodHandle in type.GetMethods())
         {
             MethodDefinition method = reader.GetMethodDefinition(methodHandle);
-            if (!IsVisible(method.Attributes))
+            if (!IsVisibleMethod(method.Attributes))
             {
                 continue;
             }
@@ -113,7 +113,7 @@ static List<string> BuildSnapshot(MetadataReader reader)
         foreach (FieldDefinitionHandle fieldHandle in type.GetFields())
         {
             FieldDefinition field = reader.GetFieldDefinition(fieldHandle);
-            if (!IsVisible(field.Attributes))
+            if (!IsVisibleField(field.Attributes))
             {
                 continue;
             }
@@ -145,13 +145,13 @@ static bool IsExternallyVisibleType(MetadataReader reader, TypeDefinitionHandle 
     return !parent.IsNil && IsExternallyVisibleType(reader, parent);
 }
 
-static bool IsVisible(MethodAttributes attributes)
+static bool IsVisibleMethod(MethodAttributes attributes)
 {
     MethodAttributes access = attributes & MethodAttributes.MemberAccessMask;
     return access is MethodAttributes.Public or MethodAttributes.Family or MethodAttributes.FamORAssem;
 }
 
-static bool IsVisible(FieldAttributes attributes)
+static bool IsVisibleField(FieldAttributes attributes)
 {
     FieldAttributes access = attributes & FieldAttributes.FieldAccessMask;
     return access is FieldAttributes.Public or FieldAttributes.Family or FieldAttributes.FamORAssem;
