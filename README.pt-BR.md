@@ -113,6 +113,10 @@ await dispatcher.RunAsync(stoppingToken);
 
 Para o contrato completo de persistência e as orientações de conformidade, consulte [`docs/persistence.pt-BR.md`](docs/persistence.pt-BR.md).
 
+Um exemplo end-to-end executável está disponível em [`samples/ReliableWebhooks.Sample`](samples/ReliableWebhooks.Sample). Para integração em produção, configuração, idempotência do receiver, verificação de assinatura e troubleshooting, consulte [`docs/production-usage.md`](docs/production-usage.md).
+
+Um exemplo end-to-end executável está disponível em [`samples/ReliableWebhooks.Sample`](samples/ReliableWebhooks.Sample). Para integração em produção, configuração, idempotência do receiver, verificação de assinatura e troubleshooting, consulte [`docs/production-usage.md`](docs/production-usage.md).
+
 ### Injeção de dependência e hosted dispatcher
 
 Aplicações que usam o Generic Host do .NET podem registrar a integração padrão através de `AddReliableWebhooks`. Uma aplicação de produção deve registrar seu próprio `IWebhookDeliveryStore`; ReliableWebhooks não escolhe implicitamente o store em memória, que não é durável, como default de produção.
