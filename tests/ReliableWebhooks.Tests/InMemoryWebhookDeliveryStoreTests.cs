@@ -77,4 +77,28 @@ public sealed class InMemoryWebhookDeliveryStoreTests : WebhookDeliveryStoreConf
 
         Assert.Null(await store.GetAsync("poison-header", cancellationToken));
     }
+
+    [Theory]
+    [InlineData("metadata-id", "poison\rid", "order.created", "application/json")]
+    [InlineData("metadata-event", "metadata-event", "order\ncreated", "application/json")]
+    [InlineData("metadata-content-type", "metadata-content-type", "order.created", "application json")]
+    public async Task InvalidBuiltInMetadataCannotBecomePersistedDelivery(
+        string lookupId,
+        string id,
+        string eventType,
+        string contentType)
+    {
+        InMemoryWebhookDeliveryStore store = new();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+
+        Assert.Throws<ArgumentException>(
+            () => new WebhookMessage(
+                id,
+                eventType,
+                new Uri("https://example.test/webhooks"),
+                new byte[] { 1 },
+                contentType));
+
+        Assert.Null(await store.GetAsync(lookupId, cancellationToken));
+    }
 }

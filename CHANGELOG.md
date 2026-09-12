@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - Custom webhook headers are validated when a `WebhookMessage` is created so invalid header names or control-character values cannot be persisted as poison deliveries.
+- Webhook IDs, event types, and content types are validated when a `WebhookMessage` is created before those values can be used in generated HTTP headers or telemetry.
 - Webhook HTTP transport now requires HTTPS destinations by default; plaintext HTTP delivery requires explicit `WebhookHttpTransportOptions.AllowInsecureHttp` opt-in.
 - The DI-managed webhook `HttpClient` now disables automatic cookies to avoid hidden state sharing between deliveries.
 

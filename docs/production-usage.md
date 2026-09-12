@@ -247,6 +247,8 @@ UTF8(unixTimestampSeconds + ".") || rawRequestBodyBytes
 
 Custom headers are validated before a `WebhookMessage` can be enqueued or persisted. Header names must use HTTP token syntax, duplicate names are rejected case-insensitively, values cannot be null, and values cannot contain control characters such as CR, LF, or NUL. The HTTP transport applies custom headers through normal validated `HttpHeaders` APIs and supports both request headers and content headers such as `Content-Language`. Applications that let tenants or subscribers configure custom headers remain responsible for deciding which header names are allowed for their domain and for treating header values as sensitive data.
 
+Built-in message metadata is validated at the same boundary. `WebhookMessage.Id` and `WebhookMessage.EventType` must be non-empty and cannot contain control characters because they are emitted as generated signing headers and safe structured telemetry fields. `WebhookMessage.ContentType` must parse as an HTTP media type before the message can be persisted.
+
 ### Receiver-side verification
 
 Verify the raw request body before parsing or reserializing it. A receiver should also reject timestamps outside a small replay-tolerance window and compare HMAC digests in constant time.

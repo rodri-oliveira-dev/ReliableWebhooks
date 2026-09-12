@@ -54,6 +54,19 @@ public sealed class WebhookMessageTests
     }
 
     [Theory]
+    [InlineData("webhook\r123")]
+    [InlineData("webhook\n123")]
+    [InlineData("webhook\0123")]
+    [InlineData("webhook\u0001123")]
+    [InlineData("webhook\u007f123")]
+    public void ConstructorRejectsIdentifierWithControlCharacters(string id)
+    {
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CreateMessage(id: id));
+
+        Assert.Equal("id", exception.ParamName);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
@@ -63,12 +76,52 @@ public sealed class WebhookMessageTests
     }
 
     [Theory]
+    [InlineData("order\rcreated")]
+    [InlineData("order\ncreated")]
+    [InlineData("order\0created")]
+    [InlineData("order\u0001created")]
+    [InlineData("order\u007fcreated")]
+    public void ConstructorRejectsEventTypeWithControlCharacters(string eventType)
+    {
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CreateMessage(eventType: eventType));
+
+        Assert.Equal("eventType", exception.ParamName);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
     public void ConstructorRejectsInvalidContentType(string? contentType)
     {
         Assert.ThrowsAny<ArgumentException>(() => CreateMessage(contentType: contentType!));
+    }
+
+    [Theory]
+    [InlineData("application")]
+    [InlineData("application/")]
+    [InlineData("application json")]
+    [InlineData("application/json; charset=\"unterminated")]
+    [InlineData("application/\0json")]
+    public void ConstructorRejectsMalformedContentType(string contentType)
+    {
+        ArgumentException exception = Assert.Throws<ArgumentException>(
+            () => CreateMessage(contentType: contentType));
+
+        Assert.Equal("contentType", exception.ParamName);
+    }
+
+    [Fact]
+    public void ConstructorAcceptsStableIdUnicodeEventTypeAndVendorMediaType()
+    {
+        WebhookMessage message = CreateMessage(
+            id: "order_01HRDB5TK7A9Z9",
+            eventType: "pedido.criado",
+            contentType: "application/vnd.reliable.order+json; charset=utf-8");
+
+        Assert.Equal("order_01HRDB5TK7A9Z9", message.Id);
+        Assert.Equal("pedido.criado", message.EventType);
+        Assert.Equal("application/vnd.reliable.order+json; charset=utf-8", message.ContentType);
     }
 
     [Fact]

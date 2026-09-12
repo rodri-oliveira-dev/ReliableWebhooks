@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Net.Http.Headers;
 
 namespace ReliableWebhooks;
 
@@ -19,8 +20,10 @@ public sealed class WebhookMessage
     /// <param name="contentType">The payload content type.</param>
     /// <param name="headers">Optional custom delivery headers.</param>
     /// <exception cref="ArgumentException">
-    /// A required string value is empty or whitespace, a header name is invalid, a header value contains
-    /// a control character, or <paramref name="destination"/> is not an absolute HTTP or HTTPS URI.
+    /// A required string value is empty or whitespace, <paramref name="id"/> or <paramref name="eventType"/>
+    /// contains a control character, <paramref name="contentType"/> is not a valid HTTP media type, a header
+    /// name is invalid, a header value contains a control character, or <paramref name="destination"/> is not
+    /// an absolute HTTP or HTTPS URI.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="destination"/> is <see langword="null"/>.</exception>
     public WebhookMessage(
@@ -35,6 +38,9 @@ public sealed class WebhookMessage
         ArgumentException.ThrowIfNullOrWhiteSpace(eventType);
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
+        ValidateNoControlCharacters(id, nameof(id));
+        ValidateNoControlCharacters(eventType, nameof(eventType));
+        ValidateContentType(contentType);
 
         if (!destination.IsAbsoluteUri || !IsHttpDestination(destination))
         {
@@ -151,6 +157,11 @@ public sealed class WebhookMessage
 
     private static void ValidateHeaderValue(string value, string paramName)
     {
+        ValidateNoControlCharacters(value, paramName);
+    }
+
+    private static void ValidateNoControlCharacters(string value, string paramName)
+    {
         foreach (char character in value)
         {
             if (character <= '\u001f' || character == '\u007f')
@@ -159,6 +170,16 @@ public sealed class WebhookMessage
                     "Header values cannot contain control characters.",
                     paramName);
             }
+        }
+    }
+
+    private static void ValidateContentType(string contentType)
+    {
+        if (!MediaTypeHeaderValue.TryParse(contentType, out _))
+        {
+            throw new ArgumentException(
+                "Content type must be a valid HTTP media type.",
+                nameof(contentType));
         }
     }
 }
