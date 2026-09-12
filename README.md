@@ -6,7 +6,7 @@ ReliableWebhooks is a .NET 10 library for building reliable outbound webhook del
 
 It provides composable primitives for stable webhook identities, persistence and lease coordination, bounded concurrent dispatching, one-attempt HTTP delivery, HMAC-SHA256 request signing, response classification, deterministic retry scheduling, backend-neutral observability, and standard .NET dependency-injection/hosting integration. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
 
-> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives, concurrent dispatcher, signing, observability, dependency injection, and optional hosted-dispatcher integration described below; the built-in durable store is still part of the work required before the first public release.
+> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives, concurrent dispatcher, signing, observability, dependency injection, and optional hosted-dispatcher integration described below. The core defines a technology-agnostic `IWebhookDeliveryStore` contract and conformance semantics; production applications provide the durable store that fits their persistence stack.
 
 ## Why ReliableWebhooks?
 
@@ -110,6 +110,8 @@ await dispatcher.RunAsync(stoppingToken);
 `WebhookDispatcher` does not create unbounded work: it claims at most the number of currently available concurrency slots. On shutdown it stops new claims, lets in-flight deliveries finish during the configured grace period, and then cancels remaining attempts. Canceled work is not marked successful; its lease can expire and be reclaimed later.
 
 `InMemoryWebhookDeliveryStore` is process-local and **not durable**. It exists for tests and samples only and must not be used as production persistence.
+
+For the full persistence contract and conformance guidance, see [`docs/persistence.md`](docs/persistence.md).
 
 ### Dependency injection and hosted dispatcher
 
@@ -311,7 +313,7 @@ ReliableWebhooks is designed around explicit delivery semantics:
 - **Telemetry is backend-neutral.** Logs, traces, and metrics use standard .NET APIs; exporters remain an application concern.
 - **Persistence is replaceable.** The core package does not depend on a specific database provider.
 
-The current development version does not yet include the production durable EF Core store planned for v0.1.0.
+`ReliableWebhooks` v0.1.0 does not require a built-in production persistence adapter. Applications provide a conforming durable `IWebhookDeliveryStore`; optional EF Core, Dapper, Redis, file-backed, or other adapters may be introduced independently.
 
 ## Extensibility
 
