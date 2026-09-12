@@ -1,0 +1,44 @@
+name: Temporary Codex API baseline
+
+on:
+  push:
+    branches:
+      - release/issue-13-v0.1.0
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Build release assembly
+        run: |
+          dotnet restore ReliableWebhooks.slnx --locked-mode
+          dotnet build ReliableWebhooks.slnx --configuration Release --no-restore
+
+      - name: Regenerate and verify public API baseline
+        run: |
+          dotnet run --file scripts/verify-public-api.cs -- src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll src/ReliableWebhooks/PublicApi.v0.1.0.txt --write
+          dotnet run --file scripts/verify-public-api.cs -- src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll src/ReliableWebhooks/PublicApi.v0.1.0.txt
+
+      - name: Commit baseline
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/ReliableWebhooks/PublicApi.v0.1.0.txt
+          if git diff --cached --quiet; then
+            echo "Baseline is already current."
+            exit 0
+          fi
+          git commit -m "test: regenerate v0.1.0 public API signatures"
+          git push
