@@ -29,6 +29,45 @@ public sealed class ObservabilityTests
     }
 
     [Fact]
+    public async Task InstrumentedStoreEmitsEnqueueTelemetryOnceForWrappedStore()
+    {
+        const string webhookId = "observability-enqueue";
+        const string eventType = "observability.enqueue";
+        RecordingLogger logger = new();
+        using TelemetryRecorder telemetry = new();
+        IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+            new InMemoryWebhookDeliveryStore(),
+            logger);
+        WebhookMessage message = new(
+            webhookId,
+            eventType,
+            new Uri("https://example.test/webhooks"),
+            [1, 2, 3],
+            "application/json");
+
+        WebhookEnqueueResult first = await store.EnqueueAsync(
+            message,
+            Now,
+            TestContext.Current.CancellationToken);
+        WebhookEnqueueResult duplicate = await store.EnqueueAsync(
+            message,
+            Now,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(first.WasEnqueued);
+        Assert.False(duplicate.WasEnqueued);
+        Assert.Single(
+            logger.Entries,
+            entry => entry.EventId.Id == 1001
+                && entry.Properties["WebhookId"]?.ToString() == webhookId);
+        Assert.Single(
+            telemetry.Measurements,
+            measurement => measurement.InstrumentName == ReliableWebhooksInstrumentation.QueuedMetricName
+                && measurement.Tags.Any(
+                    tag => tag.Key == "webhook.event_type" && tag.Value?.ToString() == eventType));
+    }
+
+    [Fact]
     public async Task SuccessfulDeliveryEmitsStructuredLogsTraceAndMetrics()
     {
         const string webhookId = "observability-success";
@@ -44,7 +83,8 @@ public sealed class ObservabilityTests
             retryPolicy: null);
 
         Activity activity = Assert.Single(
-            telemetry.Activities.Where(item => GetTag(item, "webhook.id") == webhookId));
+            telemetry.Activities,
+            item => GetTag(item, "webhook.id") == webhookId);
         Assert.Equal(ReliableWebhooksInstrumentation.DeliveryAttemptActivityName, activity.OperationName);
         Assert.Equal(eventType, GetTag(activity, "webhook.event_type"));
         Assert.Equal("success", GetTag(activity, "webhook.outcome"));
@@ -88,7 +128,8 @@ public sealed class ObservabilityTests
         await RunDeliveryAsync(webhookId, eventType, statusCode, logger, retryPolicy);
 
         Activity activity = Assert.Single(
-            telemetry.Activities.Where(item => GetTag(item, "webhook.id") == webhookId));
+            telemetry.Activities,
+            item => GetTag(item, "webhook.id") == webhookId);
         Assert.Equal(expectedOutcome, GetTag(activity, "webhook.outcome"));
         Assert.Equal(ActivityStatusCode.Error, activity.Status);
         AssertMeasurement(telemetry, expectedMetric, eventType);
@@ -118,7 +159,8 @@ public sealed class ObservabilityTests
 
         string logs = string.Join('\n', logger.Entries.Select(entry => entry.Message));
         Activity activity = Assert.Single(
-            telemetry.Activities.Where(item => GetTag(item, "webhook.id") == webhookId));
+            telemetry.Activities,
+            item => GetTag(item, "webhook.id") == webhookId);
         string activityData = string.Join(
             '\n',
             activity.TagObjects.Select(tag => $"{tag.Key}={tag.Value}"));
@@ -153,7 +195,9 @@ public sealed class ObservabilityTests
         Uri? destination = null,
         IReadOnlyDictionary<string, string>? headers = null)
     {
-        InMemoryWebhookDeliveryStore store = new(logger);
+        IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+            new InMemoryWebhookDeliveryStore(),
+            logger);
         WebhookMessage message = new(
             webhookId,
             eventType,
