@@ -154,7 +154,7 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
 webhooks.AddHostedDispatcher();
 ```
 
-`AddHostedDispatcher()` is opt-in. Without it, applications can resolve and run `WebhookDispatcher` themselves. The default transport uses `IHttpClientFactory`, disables automatic redirects, and sets `HttpClient.Timeout` to infinite so `WebhookHttpTransportOptions.AttemptTimeout` remains the authoritative per-attempt timeout. Additional handlers or client configuration can be added through `ReliableWebhooksBuilder.HttpClientBuilder`.
+`AddHostedDispatcher()` is opt-in. Without it, applications can resolve and run `WebhookDispatcher` themselves. The default transport uses `IHttpClientFactory`, disables automatic redirects, removes the default `HttpClientFactory` request loggers to avoid leaking secret-bearing destination paths or query strings, and sets `HttpClient.Timeout` to infinite so `WebhookHttpTransportOptions.AttemptTimeout` remains the authoritative per-attempt timeout. Additional handlers or client configuration can be added through `ReliableWebhooksBuilder.HttpClientBuilder`.
 
 The default response classifier, retry policy, transport, and dispatcher are registered with replaceable DI registrations. Stores and signers are application-provided, and dispatcher timing or retry jitter abstractions can also be replaced. Invalid dispatcher, retry, transport, or signing options are validated when options are resolved and by Generic Host startup validation.
 

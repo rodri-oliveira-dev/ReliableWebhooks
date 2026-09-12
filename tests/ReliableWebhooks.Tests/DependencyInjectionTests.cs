@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using ReliableWebhooks;
@@ -74,6 +75,47 @@ public sealed class DependencyInjectionTests
         Assert.Equal(WebhookDeliveryOutcome.Success, second.Outcome);
         Assert.Equal(2, handler.RequestCount);
         httpClientFactory.Received(2).CreateClient(builder.HttpClientBuilder.Name);
+    }
+
+    [Fact]
+    public async Task DefaultHttpClientDoesNotLogSecretBearingRequestUriOrHeaders()
+    {
+        const string pathSecret = "path-secret-sentinel";
+        const string querySecret = "query-secret-sentinel";
+        const string headerSecret = "header-secret-sentinel";
+        RecordingLoggerProvider loggerProvider = new();
+        ServiceCollection services = new();
+        services.AddLogging(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Trace);
+            builder.AddProvider(loggerProvider);
+        });
+
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks();
+        builder.HttpClientBuilder.ConfigurePrimaryHttpMessageHandler(() => new SuccessHandler());
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        HttpClient client = provider
+            .GetRequiredService<IHttpClientFactory>()
+            .CreateClient(builder.HttpClientBuilder.Name);
+        using HttpRequestMessage request = new(
+            HttpMethod.Post,
+            $"https://example.test/webhooks/{pathSecret}?token={querySecret}")
+        {
+            Content = new ByteArrayContent([1, 2, 3]),
+        };
+        request.Headers.Add("X-Secret-Test", headerSecret);
+
+        using HttpResponseMessage response = await client.SendAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        string logText = string.Join('\n', loggerProvider.Messages);
+        Assert.DoesNotContain(pathSecret, logText, StringComparison.Ordinal);
+        Assert.DoesNotContain(querySecret, logText, StringComparison.Ordinal);
+        Assert.DoesNotContain(headerSecret, logText, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Net.Http.HttpClient.ReliableWebhooks", logText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -265,6 +307,75 @@ public sealed class DependencyInjectionTests
         {
             RequestCount++;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        }
+    }
+
+    private sealed class RecordingLoggerProvider : ILoggerProvider
+    {
+        private readonly object gate = new();
+        private readonly List<string> messages = [];
+
+        public string[] Messages
+        {
+            get
+            {
+                lock (gate)
+                {
+                    return messages.ToArray();
+                }
+            }
+        }
+
+        public ILogger CreateLogger(string categoryName)
+        {
+            return new RecordingLogger(this, categoryName);
+        }
+
+        public void Dispose()
+        {
+        }
+
+        private void Add(string categoryName, string message)
+        {
+            lock (gate)
+            {
+                messages.Add($"{categoryName}: {message}");
+            }
+        }
+
+        private sealed class RecordingLogger : ILogger
+        {
+            private readonly RecordingLoggerProvider provider;
+            private readonly string categoryName;
+
+            internal RecordingLogger(
+                RecordingLoggerProvider provider,
+                string categoryName)
+            {
+                this.provider = provider;
+                this.categoryName = categoryName;
+            }
+
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull
+            {
+                return null;
+            }
+
+            public bool IsEnabled(LogLevel logLevel)
+            {
+                return true;
+            }
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                provider.Add(categoryName, formatter(state, exception));
+            }
         }
     }
 

@@ -50,6 +50,7 @@ public static class ReliableWebhooksServiceCollectionExtensions
 
         IHttpClientBuilder httpClientBuilder = services
             .AddHttpClient(DefaultHttpClientName)
+            .RemoveAllLoggers()
             .ConfigureHttpClient(static client => client.Timeout = Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler
             {

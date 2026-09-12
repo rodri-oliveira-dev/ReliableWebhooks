@@ -343,7 +343,9 @@ OpenTelemetry consumers can register the activity source and meter in their own 
 | Signing header names | `X-Webhook-*` defaults | Non-empty and unique, case-insensitively |
 | Signing time provider | `TimeProvider.System` | Non-null |
 
-The DI-managed `HttpClient` has automatic redirects disabled and an infinite `HttpClient.Timeout`; `Transport.AttemptTimeout` is the authoritative per-attempt timeout. Applications can add handlers or other client configuration through `ReliableWebhooksBuilder.HttpClientBuilder`.
+The DI-managed `HttpClient` has automatic redirects disabled, default `HttpClientFactory` request logging removed, and an infinite `HttpClient.Timeout`; `Transport.AttemptTimeout` is the authoritative per-attempt timeout. Applications can add handlers or other client configuration through `ReliableWebhooksBuilder.HttpClientBuilder`.
+
+Default HTTP client logging is removed because webhook destination paths and query strings often carry endpoint secrets. Applications that deliberately add raw HTTP request logging back to `ReliableWebhooksBuilder.HttpClientBuilder` must treat destination URIs and custom header values as sensitive.
 
 Invalid options fail during host startup with actionable validation messages.
 

@@ -154,7 +154,7 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
 webhooks.AddHostedDispatcher();
 ```
 
-`AddHostedDispatcher()` é opt-in. Sem ele, a aplicação pode resolver e executar `WebhookDispatcher` diretamente. O transporte padrão usa `IHttpClientFactory`, desabilita redirects automáticos e configura `HttpClient.Timeout` como infinito para que `WebhookHttpTransportOptions.AttemptTimeout` continue sendo o timeout autoritativo de cada tentativa. Handlers ou configurações adicionais podem ser aplicados através de `ReliableWebhooksBuilder.HttpClientBuilder`.
+`AddHostedDispatcher()` é opt-in. Sem ele, a aplicação pode resolver e executar `WebhookDispatcher` diretamente. O transporte padrão usa `IHttpClientFactory`, desabilita redirects automáticos, remove os loggers padrão de requisição do `HttpClientFactory` para evitar vazamento de paths ou queries de destino que contenham secrets, e configura `HttpClient.Timeout` como infinito para que `WebhookHttpTransportOptions.AttemptTimeout` continue sendo o timeout autoritativo de cada tentativa. Handlers ou configurações adicionais podem ser aplicados através de `ReliableWebhooksBuilder.HttpClientBuilder`.
 
 Classifier de resposta, política de retry, transporte e dispatcher usam registros substituíveis por DI. Store e signer são fornecidos pela aplicação, e as abstrações de temporização do dispatcher ou fonte de jitter também podem ser substituídas. Opções inválidas de dispatcher, retry, transporte ou assinatura são validadas na resolução das opções e pela validação de startup do Generic Host.
 
