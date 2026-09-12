@@ -56,4 +56,25 @@ public sealed class InMemoryWebhookDeliveryStoreTests : WebhookDeliveryStoreConf
                 1,
                 TestContext.Current.CancellationToken));
     }
+
+    [Fact]
+    public async Task InvalidCustomHeaderCannotBecomePersistedDelivery()
+    {
+        InMemoryWebhookDeliveryStore store = new();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+
+        Assert.Throws<ArgumentException>(
+            () => new WebhookMessage(
+                "poison-header",
+                "order.created",
+                new Uri("https://example.test/webhooks"),
+                new byte[] { 1 },
+                "application/json",
+                new Dictionary<string, string>
+                {
+                    ["X-Test"] = "first\rsecond",
+                }));
+
+        Assert.Null(await store.GetAsync("poison-header", cancellationToken));
+    }
 }

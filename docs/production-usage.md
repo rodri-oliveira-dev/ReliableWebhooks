@@ -245,6 +245,8 @@ UTF8(unixTimestampSeconds + ".") || rawRequestBodyBytes
 
 `X-Webhook-Id` and `X-Webhook-Event` are delivery metadata but are **not included in those canonical HMAC bytes**. If a receiver relies on either value for authorization, idempotency, or routing, put the authoritative value in the signed payload as well and compare the header with that signed value after signature verification. The runnable sample demonstrates this cross-check for the webhook ID.
 
+Custom headers are validated before a `WebhookMessage` can be enqueued or persisted. Header names must use HTTP token syntax, duplicate names are rejected case-insensitively, values cannot be null, and values cannot contain control characters such as CR, LF, or NUL. The HTTP transport applies custom headers through normal validated `HttpHeaders` APIs and supports both request headers and content headers such as `Content-Language`. Applications that let tenants or subscribers configure custom headers remain responsible for deciding which header names are allowed for their domain and for treating header values as sensitive data.
+
 ### Receiver-side verification
 
 Verify the raw request body before parsing or reserializing it. A receiver should also reject timestamps outside a small replay-tolerance window and compare HMAC digests in constant time.

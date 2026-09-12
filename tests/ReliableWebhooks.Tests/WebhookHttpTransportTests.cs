@@ -19,6 +19,7 @@ public sealed class WebhookHttpTransportTests
             headers: new Dictionary<string, string>
             {
                 ["X-Webhook-Signature"] = "signature-value",
+                ["Content-Language"] = "en-US",
             });
 
         WebhookDeliveryResult result = await transport.SendAsync(
@@ -31,6 +32,7 @@ public sealed class WebhookHttpTransportTests
         Assert.Equal(new Uri("https://example.test/webhooks"), handler.RequestUri);
         Assert.Equal(new byte[] { 1, 2, 3 }, handler.Body);
         Assert.Equal("application/vnd.reliable+json", handler.ContentType);
+        Assert.Equal("en-US", handler.ContentLanguage);
         Assert.Equal("signature-value", handler.Signature);
     }
 
@@ -311,6 +313,12 @@ public sealed class WebhookHttpTransportTests
             private set;
         }
 
+        public string? ContentLanguage
+        {
+            get;
+            private set;
+        }
+
         public string? Signature
         {
             get;
@@ -327,6 +335,7 @@ public sealed class WebhookHttpTransportTests
                 ? []
                 : await request.Content.ReadAsByteArrayAsync(cancellationToken);
             ContentType = request.Content?.Headers.ContentType?.ToString();
+            ContentLanguage = request.Content?.Headers.ContentLanguage.Single();
             Signature = request.Headers.GetValues("X-Webhook-Signature").Single();
 
             return await base.SendAsync(request, cancellationToken);

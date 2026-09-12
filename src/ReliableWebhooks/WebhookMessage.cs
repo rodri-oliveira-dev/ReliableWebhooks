@@ -19,8 +19,8 @@ public sealed class WebhookMessage
     /// <param name="contentType">The payload content type.</param>
     /// <param name="headers">Optional custom delivery headers.</param>
     /// <exception cref="ArgumentException">
-    /// A required string value is empty or whitespace, a header name is empty or whitespace,
-    /// or <paramref name="destination"/> is not an absolute HTTP or HTTPS URI.
+    /// A required string value is empty or whitespace, a header name is invalid, a header value contains
+    /// a control character, or <paramref name="destination"/> is not an absolute HTTP or HTTPS URI.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="destination"/> is <see langword="null"/>.</exception>
     public WebhookMessage(
@@ -111,16 +111,54 @@ public sealed class WebhookMessage
 
         foreach ((string name, string value) in headers)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(name, nameof(headers));
+            ValidateHeaderName(name, nameof(headers));
 
             if (value is null)
             {
                 throw new ArgumentException("Header values cannot be null.", nameof(headers));
             }
 
+            ValidateHeaderValue(value, nameof(headers));
             copy.Add(name, value);
         }
 
         return new ReadOnlyDictionary<string, string>(copy);
+    }
+
+    private static void ValidateHeaderName(string name, string paramName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name, paramName);
+
+        foreach (char character in name)
+        {
+            if (!IsHeaderNameCharacter(character))
+            {
+                throw new ArgumentException(
+                    "Header names must use valid HTTP token characters.",
+                    paramName);
+            }
+        }
+    }
+
+    private static bool IsHeaderNameCharacter(char character)
+    {
+        return (character >= 'A' && character <= 'Z')
+            || (character >= 'a' && character <= 'z')
+            || (character >= '0' && character <= '9')
+            || character is '!' or '#' or '$' or '%' or '&' or '\'' or '*' or '+'
+                or '-' or '.' or '^' or '_' or '`' or '|' or '~';
+    }
+
+    private static void ValidateHeaderValue(string value, string paramName)
+    {
+        foreach (char character in value)
+        {
+            if (character <= '\u001f' || character == '\u007f')
+            {
+                throw new ArgumentException(
+                    "Header values cannot contain control characters.",
+                    paramName);
+            }
+        }
     }
 }

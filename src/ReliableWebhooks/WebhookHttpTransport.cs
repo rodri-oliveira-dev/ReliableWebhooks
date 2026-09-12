@@ -222,7 +222,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         try
         {
             ByteArrayContent content = new(payload);
-            _ = content.Headers.TryAddWithoutValidation("Content-Type", message.ContentType);
+            AddContentType(content, message.ContentType);
             request.Content = content;
 
             foreach ((string name, string value) in message.Headers)
@@ -232,11 +232,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
                     continue;
                 }
 
-                if (!request.Headers.TryAddWithoutValidation(name, value)
-                    && !content.Headers.TryAddWithoutValidation(name, value))
-                {
-                    throw new InvalidOperationException($"The custom header '{name}' could not be applied to the HTTP request.");
-                }
+                AddCustomHeader(request, content, name, value);
             }
 
             if (signer is not null)
@@ -279,9 +275,55 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         _ = request.Headers.Remove(name);
         _ = content.Headers.Remove(name);
 
-        if (!request.Headers.TryAddWithoutValidation(name, value))
+        try
+        {
+            request.Headers.Add(name, value);
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidOperationException)
         {
             throw new InvalidOperationException($"The generated webhook header '{name}' could not be applied to the HTTP request.");
+        }
+    }
+
+    private static void AddContentType(HttpContent content, string contentType)
+    {
+        try
+        {
+            content.Headers.Add("Content-Type", contentType);
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidOperationException)
+        {
+            throw new InvalidOperationException("The webhook content type could not be applied to the HTTP request.");
+        }
+    }
+
+    private static void AddCustomHeader(
+        HttpRequestMessage request,
+        HttpContent content,
+        string name,
+        string value)
+    {
+        try
+        {
+            request.Headers.Add(name, value);
+            return;
+        }
+        catch (InvalidOperationException)
+        {
+            // The header is valid but belongs to content rather than the request envelope.
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException($"The custom header '{name}' value is not valid for HTTP.");
+        }
+
+        try
+        {
+            content.Headers.Add(name, value);
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidOperationException)
+        {
+            throw new InvalidOperationException($"The custom header '{name}' could not be applied to the HTTP request.");
         }
     }
 

@@ -195,6 +195,8 @@ Com o `WebhookSigningOptions` padrão, cada requisição assinada contém:
 
 Os nomes dos headers podem ser customizados através de `WebhookHttpTransportOptions.Signing`. Headers gerados pela assinatura têm precedência sobre headers customizados da mensagem com o mesmo nome.
 
+Headers customizados fornecidos ao `WebhookMessage` devem usar nomes válidos de token HTTP, são comparados sem diferenciar maiúsculas/minúsculas para detectar duplicidade e não podem conter caracteres de controle como CR, LF ou NUL nos valores. Trate valores de headers customizados como sensíveis quando vierem de tenants, assinantes ou outra configuração externa.
+
 A entrada canônica do HMAC é:
 
 ```text

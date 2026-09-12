@@ -195,6 +195,8 @@ With the default `WebhookSigningOptions`, each signed request contains:
 
 Header names can be customized through `WebhookHttpTransportOptions.Signing`. Generated signing headers take precedence over custom message headers with the same names.
 
+Custom headers supplied to `WebhookMessage` must use valid HTTP token names, are compared case-insensitively for duplicates, and must not contain control characters such as CR, LF, or NUL in their values. Treat custom header values as sensitive whenever they come from tenants, subscribers, or other external configuration.
+
 The canonical HMAC input is:
 
 ```text

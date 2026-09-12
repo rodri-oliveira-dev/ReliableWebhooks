@@ -104,6 +104,49 @@ public sealed class WebhookMessageTests
         Assert.Throws<ArgumentException>(() => CreateMessage(headers: headers));
     }
 
+    [Theory]
+    [InlineData("Bad Header")]
+    [InlineData("Bad:Header")]
+    [InlineData("Bad(Header)")]
+    [InlineData("Bad\tHeader")]
+    public void ConstructorRejectsInvalidHeaderName(string headerName)
+    {
+        Dictionary<string, string> headers = new()
+        {
+            [headerName] = "value",
+        };
+
+        Assert.Throws<ArgumentException>(() => CreateMessage(headers: headers));
+    }
+
+    [Theory]
+    [InlineData("first\rsecond")]
+    [InlineData("first\nsecond")]
+    [InlineData("first\0second")]
+    [InlineData("first\u0001second")]
+    [InlineData("first\u007fsecond")]
+    public void ConstructorRejectsHeaderValuesWithControlCharacters(string headerValue)
+    {
+        Dictionary<string, string> headers = new()
+        {
+            ["X-Test"] = headerValue,
+        };
+
+        Assert.Throws<ArgumentException>(() => CreateMessage(headers: headers));
+    }
+
+    [Fact]
+    public void ConstructorRejectsDuplicateHeadersUsingCaseInsensitiveComparison()
+    {
+        Dictionary<string, string> headers = new()
+        {
+            ["X-Test"] = "first",
+            ["x-test"] = "second",
+        };
+
+        Assert.Throws<ArgumentException>(() => CreateMessage(headers: headers));
+    }
+
     private static WebhookMessage CreateMessage(
         string id = "webhook-123",
         string eventType = "order.created",
