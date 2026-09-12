@@ -26,17 +26,18 @@ internal static class ReceiverEndpoint
         }
 
         string headerWebhookId = request.Headers["X-Webhook-Id"].ToString();
-        string? signedWebhookId = GetSignedWebhookId(payload);
+        SignedPayload? signedPayload = ParseSignedPayload(payload);
 
-        if (signedWebhookId is null
-            || !string.Equals(headerWebhookId, signedWebhookId, StringComparison.Ordinal))
+        if (signedPayload is null
+            || !string.Equals(headerWebhookId, signedPayload.WebhookId, StringComparison.Ordinal)
+            || !string.Equals(behavior, signedPayload.Behavior, StringComparison.Ordinal))
         {
             return Results.BadRequest();
         }
 
-        int receiverAttempt = receiverState.RegisterAttempt(signedWebhookId);
+        int receiverAttempt = receiverState.RegisterAttempt(signedPayload.WebhookId);
 
-        return behavior switch
+        return signedPayload.Behavior switch
         {
             "success" => Results.NoContent(),
             "retry" when receiverAttempt == 1 => Results.StatusCode(StatusCodes.Status503ServiceUnavailable),
@@ -110,14 +111,25 @@ internal static class ReceiverEndpoint
         }
     }
 
-    private static string? GetSignedWebhookId(ReadOnlyMemory<byte> payload)
+    private static SignedPayload? ParseSignedPayload(ReadOnlyMemory<byte> payload)
     {
         try
         {
             using JsonDocument document = JsonDocument.Parse(payload);
-            return document.RootElement.TryGetProperty("WebhookId", out JsonElement webhookId)
-                ? webhookId.GetString()
-                : null;
+            JsonElement root = document.RootElement;
+
+            if (!root.TryGetProperty("WebhookId", out JsonElement webhookIdElement)
+                || !root.TryGetProperty("Behavior", out JsonElement behaviorElement))
+            {
+                return null;
+            }
+
+            string? webhookId = webhookIdElement.GetString();
+            string? signedBehavior = behaviorElement.GetString();
+
+            return string.IsNullOrWhiteSpace(webhookId) || string.IsNullOrWhiteSpace(signedBehavior)
+                ? null
+                : new SignedPayload(webhookId, signedBehavior);
         }
         catch (JsonException)
         {
@@ -133,6 +145,8 @@ internal static class ReceiverEndpoint
         await request.Body.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
         return buffer.ToArray();
     }
+
+    private sealed record SignedPayload(string WebhookId, string Behavior);
 }
 
 internal sealed class ReceiverState
