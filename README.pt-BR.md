@@ -4,9 +4,9 @@
 
 ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiável de webhooks de saída.
 
-Ela fornece componentes combináveis para identidade estável de webhooks, persistência e coordenação por lease, dispatch concorrente limitado, envio HTTP de uma única tentativa, assinatura HMAC-SHA256, classificação de respostas e agendamento determinístico de retries. O objetivo é tornar explícitas as preocupações de confiabilidade da entrega de webhooks, em vez de escondê-las dentro de um loop de background opaco.
+Ela fornece componentes combináveis para identidade estável de webhooks, persistência e coordenação por lease, dispatch concorrente limitado, envio HTTP de uma única tentativa, assinatura HMAC-SHA256, classificação de respostas, agendamento determinístico de retries e observabilidade independente de backend. O objetivo é tornar explícitas as preocupações de confiabilidade da entrega de webhooks, em vez de escondê-las dentro de um loop de background opaco.
 
-> **Status:** a v0.1.0 está em desenvolvimento. O primeiro pacote público no NuGet ainda não foi lançado. A versão atual fornece os componentes de confiabilidade e o dispatcher concorrente descritos abaixo; o store durável nativo, a integração com injeção de dependência e a observabilidade ainda fazem parte do trabalho necessário antes da primeira release pública.
+> **Status:** a v0.1.0 está em desenvolvimento. O primeiro pacote público no NuGet ainda não foi lançado. A versão atual fornece os componentes de confiabilidade, dispatcher concorrente, assinatura e observabilidade descritos abaixo; o store durável nativo e a integração com injeção de dependência ainda fazem parte do trabalho necessário antes da primeira release pública.
 
 ## Por que ReliableWebhooks?
 
@@ -23,6 +23,7 @@ ReliableWebhooks trata esses pontos separando o fluxo de entrega em responsabili
 - assinatura HMAC-SHA256 opcional sobre os bytes exatos do payload enviado;
 - resultados independentes do transporte para sucesso, falha retryable e falha permanente;
 - uma política de retry que calcula a próxima tentativa sem aguardar nem bloquear um worker;
+- logs estruturados, traces e métricas baseados nas APIs padrão de diagnostics do .NET;
 - abstrações substituíveis para persistência, transporte, temporização do dispatcher, assinatura, classificação e comportamento de retry.
 
 ## Como funciona
@@ -36,6 +37,7 @@ Uma entrega com ReliableWebhooks é estruturada como uma pequena máquina de est
 5. O transporte retorna um `WebhookDeliveryResult` com resultado independente do transporte.
 6. Sucessos e falhas permanentes são persistidos imediatamente. Falhas retryable são passadas para `IWebhookRetryPolicy`, que retorna um `NextAttemptAt` futuro ou uma decisão de dead letter.
 7. O store registra o estado resultante para que trabalhos abandonados ou com falha possam ser retomados com segurança. A posse da lease impede que workers obsoletos sobrescrevam o dono atual.
+8. O ciclo de vida emite logs estruturados seguros, uma activity por tentativa e métricas limitadas sem exigir backend de telemetria.
 
 Quando combinado com um store durável, o modelo de entrega pretendido é **at-least-once**, e não exactly-once. Portanto, os receptores precisam ser idempotentes e tolerar entregas duplicadas.
 
@@ -150,6 +152,80 @@ Um receptor pode validar a entrega de forma independente seguindo estes passos:
 
 Segredos de assinatura nunca são incluídos em mensagens de exceção geradas pela biblioteca nem em telemetria automática. Aplicações devem manter a mesma regra em providers de segredo e signers customizados.
 
+## Observabilidade
+
+ReliableWebhooks emite telemetria pelas APIs padrão do .NET e **não** depende do SDK do OpenTelemetry, de collector ou de exporter. A aplicação decide se a telemetria será coletada e para onde ela será enviada.
+
+A classe pública `ReliableWebhooksInstrumentation` expõe os nomes canônicos usados pela biblioteca:
+
+```csharp
+ReliableWebhooksInstrumentation.ActivitySourceName // "ReliableWebhooks"
+ReliableWebhooksInstrumentation.MeterName          // "ReliableWebhooks"
+```
+
+A mesma classe expõe nomes estáveis para a activity de tentativa e para as métricas publicadas, evitando strings mágicas nas integrações.
+
+### Logs estruturados
+
+`WebhookDispatcher` possui um overload aditivo de construtor que recebe `ILogger`. Os construtores existentes continuam válidos e usam um logger no-op. O store em memória também aceita opcionalmente um `ILogger` para eventos de enqueue.
+
+```csharp
+ILogger logger = loggerFactory.CreateLogger("ReliableWebhooks");
+
+IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore(logger);
+var dispatcher = new WebhookDispatcher(
+    store,
+    transport,
+    retryPolicy,
+    options,
+    delay: null,
+    logger);
+```
+
+O ciclo de vida usa Event IDs estáveis para enqueue, claim, início da tentativa, sucesso, agendamento de retry, falha permanente, dead letter, cancelamento, perda de lease e falha inesperada. As propriedades são estruturadas e excluem deliberadamente corpos de payload, URLs/query strings de destino, segredos de assinatura e assinaturas.
+
+### Traces
+
+Cada tentativa do dispatcher cria uma activity chamada `ReliableWebhooks.DeliveryAttempt` no activity source `ReliableWebhooks`. Os atributos seguros incluem:
+
+- `webhook.id` para correlação de logs/traces;
+- `webhook.event_type`;
+- `webhook.attempt`;
+- `webhook.outcome`;
+- `http.response.status_code` quando existe resposta HTTP;
+- `error.type` para o tipo de exceções inesperadas.
+
+Payloads, segredos, assinaturas e URLs de destino nunca são adicionados automaticamente. IDs de webhook podem aparecer em traces para correlação, mas são intencionalmente excluídos das dimensões de métricas.
+
+### Métricas
+
+| Instrumento | Tipo | Tags |
+| --- | --- | --- |
+| `reliablewebhooks.delivery.queued` | Counter | `webhook.event_type` |
+| `reliablewebhooks.delivery.attempted` | Counter | `webhook.event_type` |
+| `reliablewebhooks.delivery.succeeded` | Counter | `webhook.event_type` |
+| `reliablewebhooks.delivery.retried` | Counter | `webhook.event_type` |
+| `reliablewebhooks.delivery.permanently_failed` | Counter | `webhook.event_type` |
+| `reliablewebhooks.delivery.dead_lettered` | Counter | `webhook.event_type` |
+| `reliablewebhooks.delivery.duration` | Histogram em milissegundos | `webhook.event_type`, `webhook.outcome` |
+
+`webhook.event_type` deve vir de um vocabulário definido pela aplicação e com cardinalidade limitada. Não codifique IDs de cliente, request IDs, URLs ou outros valores ilimitados dentro do event type. IDs de webhook e destinos arbitrários não são tags de métricas.
+
+### Integração com OpenTelemetry
+
+A aplicação consumidora pode optar pelo OpenTelemetry usando seus próprios pacotes e configuração de exporter. ReliableWebhooks não depende deles:
+
+```csharp
+builder.Services
+    .AddOpenTelemetry()
+    .WithTracing(tracing =>
+        tracing.AddSource(ReliableWebhooksInstrumentation.ActivitySourceName))
+    .WithMetrics(metrics =>
+        metrics.AddMeter(ReliableWebhooksInstrumentation.MeterName));
+```
+
+A aplicação pode então adicionar OTLP, Azure Monitor, Prometheus, Grafana/Tempo, Datadog, Dynatrace ou outro exporter/backend suportado sem alterar ReliableWebhooks. Logs continuam usando `ILogger` e podem ser conectados de forma independente ao pipeline de logging/OpenTelemetry escolhido pela aplicação.
+
 ## Comportamento padrão
 
 | Área | Padrão |
@@ -188,9 +264,10 @@ ReliableWebhooks foi projetado com semântica de entrega explícita:
 - **Uma chamada do transporte significa uma tentativa HTTP.** Loops de retry ficam propositalmente fora do transporte.
 - **Payloads assinados usam os bytes exatos da requisição.** O receptor deve validar o corpo bruto, e não uma representação parseada/serializada novamente.
 - **Políticas de retry agendam; elas não esperam.** `DefaultWebhookRetryPolicy` retorna um timestamp futuro ou uma decisão de dead letter e nunca chama `Task.Delay`.
+- **A telemetria é independente de backend.** Logs, traces e métricas usam APIs padrão do .NET; exporters continuam sendo responsabilidade da aplicação.
 - **A persistência é substituível.** O pacote core não depende de um banco de dados específico.
 
-A versão atual em desenvolvimento ainda não inclui o store durável de produção com EF Core, integração com injeção de dependência/hosted service ou observabilidade planejados para a v0.1.0.
+A versão atual em desenvolvimento ainda não inclui o store durável de produção com EF Core nem a integração com injeção de dependência/hosted service planejados para a v0.1.0.
 
 ## Extensibilidade
 
@@ -203,11 +280,12 @@ Os principais comportamentos são expostos por abstrações públicas:
 - `IWebhookRetryPolicy` — decisões de retry e dead letter;
 - `IWebhookRetryJitterSource` — geração determinística ou customizada de jitter;
 - `IWebhookRequestSigner` — estratégia de assinatura da requisição;
-- `IWebhookSigningSecretProvider` — resolução do segredo de assinatura por mensagem.
+- `IWebhookSigningSecretProvider` — resolução do segredo de assinatura por mensagem;
+- `ReliableWebhooksInstrumentation` — nomes públicos estáveis de diagnostics para integração de traces e métricas.
 
 `WebhookDispatcherOptions` também expõe `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod` e `TimeProvider`, mantendo concorrência e temporização configuráveis e testáveis.
 
-Isso mantém persistência, dispatch, comportamento de transporte, assinatura e estratégia de retry independentes, substituíveis e testáveis.
+Isso mantém persistência, dispatch, comportamento de transporte, assinatura, estratégia de retry e seleção do backend de telemetria independentes, substituíveis e testáveis.
 
 ## Suporte e contribuição
 
