@@ -235,21 +235,37 @@ public sealed class WebhookDispatcher
 
         if (shutdownGracePeriod > TimeSpan.Zero)
         {
+            using CancellationTokenSource graceCancellation = new();
             Task allInFlight = Task.WhenAll(inFlight);
-            Task grace = delay.DelayAsync(shutdownGracePeriod);
+            Task grace = delay.DelayAsync(shutdownGracePeriod, graceCancellation.Token);
             Task completed = await Task.WhenAny(allInFlight, grace).ConfigureAwait(false);
 
             if (completed == allInFlight)
             {
+                graceCancellation.Cancel();
+                await ObserveCanceledDelayAsync(grace, graceCancellation.Token).ConfigureAwait(false);
                 await allInFlight.ConfigureAwait(false);
                 inFlight.Clear();
                 return;
             }
+
+            await grace.ConfigureAwait(false);
         }
 
         attemptCancellation.Cancel();
         await Task.WhenAll(inFlight).ConfigureAwait(false);
         inFlight.Clear();
+    }
+
+    private static async Task ObserveCanceledDelayAsync(Task delayTask, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await delayTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
     }
 
     private static async Task ObserveCompletedAsync(HashSet<Task> inFlight)
