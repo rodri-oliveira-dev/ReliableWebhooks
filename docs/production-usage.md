@@ -253,7 +253,39 @@ ASCII("rw-hmac-sha256/v1\0")
 
 Each `frame(value)` is an eight-byte big-endian length followed by the exact value bytes. The authenticated values are the timestamp, stable webhook ID, event type, content type, and exact body bytes. Custom headers, destination URI, and the configurable signing header names are outside the built-in HMAC envelope. If receivers authorize or route by custom headers or destination-specific context, bind those values in the application payload or use a custom signer.
 
-Custom headers are validated before a `WebhookMessage` can be enqueued or persisted. Header names must use HTTP token syntax, duplicate names are rejected case-insensitively, values cannot be null, and values cannot contain control characters such as CR, LF, or NUL. Syntax validation is separate from the reserved-header policy: the default transport owns routing, authority, and HTTP framing fields, so message data cannot supply `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, or `Proxy-Connection`. This protects destination and SSRF decisions from HTTP authority manipulation and avoids handler-dependent framing semantics. End-to-end application headers such as `Authorization` remain supported. The HTTP transport applies allowed custom headers through normal validated `HttpHeaders` APIs and supports both request headers and content headers such as `Content-Language`. Applications that let tenants or subscribers configure custom headers remain responsible for deciding which allowed header names make sense for their domain and for treating header values as sensitive data. Advanced users who truly need low-level HTTP control should provide a custom `IWebhookDeliveryTransport` rather than weakening the safe default transport.
+Custom headers are validated before a `WebhookMessage` can be enqueued or persisted. Header names must use HTTP token syntax, duplicate names are rejected case-insensitively, values cannot be null, and values cannot contain control characters such as CR, LF, or NUL. Syntax validation is separate from the reserved-header policy: the default transport owns routing, authority, and HTTP framing fields, so message data cannot supply `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, or `Proxy-Connection`. This protects destination and SSRF decisions from HTTP authority manipulation and avoids handler-dependent framing semantics. Sensitive credential headers such as `Authorization` and `Cookie` are also rejected from `WebhookMessage.Headers`; resolve them at send time with `IWebhookRequestHeaderProvider` so they are not copied into durable delivery records and queued attempts can observe rotation. `Proxy-Authorization` remains unsupported by the default delivery-message model; configure proxy credentials on the application-owned HTTP handler/proxy instead. The HTTP transport applies allowed custom headers through normal validated `HttpHeaders` APIs and supports both request headers and content headers such as `Content-Language`. Applications that let tenants or subscribers configure custom headers remain responsible for deciding which allowed header names make sense for their domain and for treating header values as sensitive data. Advanced users who truly need low-level HTTP control should provide a custom `IWebhookDeliveryTransport` rather than weakening the safe default transport.
+
+For outbound credentials, register a provider instead of embedding secrets in the persisted message:
+
+```csharp
+services.AddSingleton<IWebhookRequestHeaderProvider, MyWebhookCredentialHeaders>();
+
+internal sealed class MyWebhookCredentialHeaders : IWebhookRequestHeaderProvider
+{
+    private readonly IApplicationSecretManager secretManager;
+
+    public MyWebhookCredentialHeaders(IApplicationSecretManager secretManager)
+    {
+        this.secretManager = secretManager;
+    }
+
+    public async ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
+        WebhookMessage message,
+        CancellationToken cancellationToken = default)
+    {
+        string token = await secretManager.GetReceiverTokenAsync(
+            message.Destination.Host,
+            cancellationToken);
+
+        return new Dictionary<string, string>
+        {
+            ["Authorization"] = $"Bearer {token}",
+        };
+    }
+}
+```
+
+If the provider cannot resolve credentials, the failure is scoped to that delivery attempt and moves through the normal retry/dead-letter policy. Exception messages, logs, traces, and persisted `LastError` values must not include credential values.
 
 Built-in message metadata is validated at the same boundary. `WebhookMessage.Id` and `WebhookMessage.EventType` must be non-empty and cannot contain control characters because they are emitted as generated signing headers and safe structured telemetry fields. `WebhookMessage.ContentType` must parse as an HTTP media type before the message can be persisted.
 

@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The built-in HMAC-SHA256 signer now rejects signing secrets shorter than 32 bytes (256 bits) so weak keys fail closed before delivery.
 - The built-in HMAC-SHA256 `v1` signature now authenticates the timestamp, webhook ID, event type, content type, and exact payload bytes with a versioned length-prefixed canonical envelope.
 - Custom webhook headers can no longer use transport-reserved routing or framing names such as `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, or `Upgrade`.
+- Added `IWebhookRequestHeaderProvider` for send-time credential headers and reserved persisted `Authorization`/`Cookie` headers to avoid storing request credentials with durable deliveries.
 
 ## [0.1.0] - 2026-09-12
 

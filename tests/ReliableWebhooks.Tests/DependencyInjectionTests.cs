@@ -141,6 +141,32 @@ public sealed class DependencyInjectionTests
     }
 
     [Fact]
+    public async Task DefaultTransportUsesRegisteredRequestHeaderProvider()
+    {
+        const string credentialValue = "Bearer dynamic-di-token";
+        ServiceCollection services = new();
+        SuccessHandler handler = new();
+        services.AddSingleton<IWebhookRequestHeaderProvider>(
+            new StaticHeaderProvider(new Dictionary<string, string>
+            {
+                ["Authorization"] = credentialValue,
+            }));
+
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks();
+        builder.HttpClientBuilder.ConfigurePrimaryHttpMessageHandler(() => handler);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookDeliveryTransport transport = provider.GetRequiredService<IWebhookDeliveryTransport>();
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage("dynamic-auth"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(credentialValue, handler.Authorization);
+    }
+
+    [Fact]
     public async Task DefaultHttpClientDoesNotLogSecretBearingRequestUriOrHeaders()
     {
         const string pathSecret = "path-secret-sentinel";
@@ -512,12 +538,38 @@ public sealed class DependencyInjectionTests
             private set;
         }
 
+        internal string? Authorization
+        {
+            get;
+            private set;
+        }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             RequestCount++;
+            Authorization = request.Headers.Authorization?.ToString();
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        }
+    }
+
+    private sealed class StaticHeaderProvider : IWebhookRequestHeaderProvider
+    {
+        private readonly IReadOnlyDictionary<string, string> headers;
+
+        public StaticHeaderProvider(IReadOnlyDictionary<string, string> headers)
+        {
+            this.headers = headers;
+        }
+
+        public ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
+            WebhookMessage message,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(headers);
         }
     }
 

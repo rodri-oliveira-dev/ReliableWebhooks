@@ -203,6 +203,7 @@ public sealed class WebhookMessageTests
     [Theory]
     [InlineData("Connection")]
     [InlineData("Content-Length")]
+    [InlineData("Cookie")]
     [InlineData("Expect")]
     [InlineData("Host")]
     [InlineData("Keep-Alive")]
@@ -213,6 +214,7 @@ public sealed class WebhookMessageTests
     [InlineData("Trailer")]
     [InlineData("Transfer-Encoding")]
     [InlineData("Upgrade")]
+    [InlineData("Authorization")]
     [InlineData("host")]
     [InlineData("tRaNsFeR-eNcOdInG")]
     public void ConstructorRejectsReservedCustomHeadersUsingCaseInsensitiveComparison(string headerName)
@@ -226,18 +228,6 @@ public sealed class WebhookMessageTests
 
         Assert.Equal("headers", exception.ParamName);
         Assert.Contains("reserved", exception.Message, StringComparison.OrdinalIgnoreCase);
-    }
-
-    [Fact]
-    public void ConstructorAcceptsAuthorizationHeader()
-    {
-        WebhookMessage message = CreateMessage(
-            headers: new Dictionary<string, string>
-            {
-                ["Authorization"] = "Bearer test-token",
-            });
-
-        Assert.Equal("Bearer test-token", message.Headers["authorization"]);
     }
 
     private static WebhookMessage CreateMessage(

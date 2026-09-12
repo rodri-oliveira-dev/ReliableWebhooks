@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Logging;
 using ReliableWebhooks;
 using Xunit;
 
@@ -395,6 +396,54 @@ public sealed class WebhookDispatcherTests
     }
 
     [Fact]
+    public async Task CredentialHeaderProviderFailureIsBoundedAndDoesNotPersistSecretValue()
+    {
+        const string credentialValue = "dynamic-credential-sentinel";
+        InMemoryWebhookDeliveryStore store = await CreateStoreAsync("credential-provider-poison");
+        using HttpClient client = CreateClient(new StatusHandler(HttpStatusCode.NoContent));
+        WebhookHttpTransport transport = new(
+            client,
+            classifier: null,
+            options: null,
+            signer: null,
+            headerProvider: new FaultingHeaderProvider(credentialValue));
+        BlockingDelay delay = new();
+        DefaultWebhookRetryPolicy retryPolicy = new(
+            new WebhookRetryPolicyOptions
+            {
+                MaxAttempts = 1,
+                BaseDelay = TimeSpan.FromSeconds(1),
+                MaxDelay = TimeSpan.FromSeconds(1),
+                JitterFactor = 0,
+            });
+        RecordingLogger logger = new();
+        using CancellationTokenSource shutdown = new();
+        WebhookDispatcher dispatcher = CreateDispatcher(store, transport, retryPolicy, delay: delay, logger: logger);
+
+        Task run = dispatcher.RunAsync(shutdown.Token);
+        await WaitUntilAsync(async () =>
+        {
+            WebhookDeliverySnapshot? snapshot = await store.GetAsync(
+                "credential-provider-poison",
+                TestContext.Current.CancellationToken);
+            return snapshot?.State == DeliveryState.DeadLettered;
+        });
+
+        shutdown.Cancel();
+        await run;
+
+        WebhookDeliverySnapshot? poisonSnapshot = await store.GetAsync(
+            "credential-provider-poison",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(poisonSnapshot);
+        Assert.Equal(DeliveryState.DeadLettered, poisonSnapshot.State);
+        Assert.Equal("Delivery exception: System.InvalidOperationException", poisonSnapshot.LastError);
+        Assert.DoesNotContain(credentialValue, poisonSnapshot.LastError, StringComparison.Ordinal);
+        Assert.DoesNotContain(credentialValue, string.Join('\n', logger.Messages), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ClaimInfrastructureFailureStillStopsDispatcher()
     {
         WebhookDispatcher dispatcher = CreateDispatcher(
@@ -434,21 +483,32 @@ public sealed class WebhookDispatcherTests
         int maxConcurrency = 1,
         TimeSpan? shutdownGracePeriod = null,
         TimeSpan? leaseDuration = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ILogger? logger = null)
     {
-        return new WebhookDispatcher(
-            store,
-            transport,
-            retryPolicy ?? new DefaultWebhookRetryPolicy(),
-            new WebhookDispatcherOptions
-            {
-                MaxConcurrency = maxConcurrency,
-                LeaseDuration = leaseDuration ?? TimeSpan.FromMinutes(1),
-                PollInterval = TimeSpan.FromSeconds(5),
-                ShutdownGracePeriod = shutdownGracePeriod ?? TimeSpan.FromSeconds(30),
-                TimeProvider = timeProvider ?? new FixedTimeProvider(Now),
-            },
-            delay);
+        WebhookDispatcherOptions options = new()
+        {
+            MaxConcurrency = maxConcurrency,
+            LeaseDuration = leaseDuration ?? TimeSpan.FromMinutes(1),
+            PollInterval = TimeSpan.FromSeconds(5),
+            ShutdownGracePeriod = shutdownGracePeriod ?? TimeSpan.FromSeconds(30),
+            TimeProvider = timeProvider ?? new FixedTimeProvider(Now),
+        };
+
+        return logger is null
+            ? new WebhookDispatcher(
+                store,
+                transport,
+                retryPolicy ?? new DefaultWebhookRetryPolicy(),
+                options,
+                delay)
+            : new WebhookDispatcher(
+                store,
+                transport,
+                retryPolicy ?? new DefaultWebhookRetryPolicy(),
+                options,
+                delay,
+                logger);
     }
 
     private static async Task<InMemoryWebhookDeliveryStore> CreateStoreAsync(string id)
@@ -756,6 +816,53 @@ public sealed class WebhookDispatcherTests
             }
 
             return innerTransport.SendAsync(message, cancellationToken);
+        }
+    }
+
+    private sealed class FaultingHeaderProvider : IWebhookRequestHeaderProvider
+    {
+        private readonly string credentialValue;
+
+        public FaultingHeaderProvider(string credentialValue)
+        {
+            this.credentialValue = credentialValue;
+        }
+
+        public ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
+            WebhookMessage message,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new InvalidOperationException(credentialValue);
+        }
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        private readonly List<string> messages = [];
+
+        public IReadOnlyList<string> Messages => messages;
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            messages.Add(formatter(state, exception));
         }
     }
 

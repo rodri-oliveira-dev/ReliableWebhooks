@@ -20,6 +20,23 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
 {
     private const int ReadBufferSize = 8 * 1024;
 
+    private static readonly HashSet<string> TransportControlledHeaderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Connection",
+        "Content-Length",
+        "Content-Type",
+        "Expect",
+        "Host",
+        "Keep-Alive",
+        "Proxy-Authenticate",
+        "Proxy-Authorization",
+        "Proxy-Connection",
+        "TE",
+        "Trailer",
+        "Transfer-Encoding",
+        "Upgrade",
+    };
+
     private readonly HttpClient httpClient;
     private readonly IWebhookHttpResponseClassifier classifier;
     private readonly TimeSpan attemptTimeout;
@@ -27,6 +44,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
     private readonly bool allowInsecureHttp;
     private readonly IWebhookDestinationPolicy? destinationPolicy;
     private readonly IWebhookRequestSigner? signer;
+    private readonly IWebhookRequestHeaderProvider? headerProvider;
     private readonly WebhookSigningOptions signingOptions;
 
     /// <summary>
@@ -73,6 +91,35 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         IWebhookHttpResponseClassifier? classifier,
         WebhookHttpTransportOptions? options,
         IWebhookRequestSigner? signer)
+        : this(httpClient, classifier, options, signer, headerProvider: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="WebhookHttpTransport"/> class.
+    /// </summary>
+    /// <param name="httpClient">
+    /// The HTTP client used to send webhook requests. Its primary handler must have automatic redirects disabled.
+    /// </param>
+    /// <param name="classifier">A classifier that overrides the default HTTP status classification, or <see langword="null"/>.</param>
+    /// <param name="options">Transport settings, or <see langword="null"/> to use defaults.</param>
+    /// <param name="signer">A request signer, or <see langword="null"/> to disable signing.</param>
+    /// <param name="headerProvider">
+    /// A provider for request headers resolved immediately before each send attempt, or <see langword="null"/>.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="httpClient"/> is <see langword="null"/>, or signing options contain a null time provider.
+    /// </exception>
+    /// <exception cref="ArgumentException">Configured signing header names are empty or duplicated.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The configured timeout is invalid or the response-body byte limit is negative.
+    /// </exception>
+    public WebhookHttpTransport(
+        HttpClient httpClient,
+        IWebhookHttpResponseClassifier? classifier,
+        WebhookHttpTransportOptions? options,
+        IWebhookRequestSigner? signer,
+        IWebhookRequestHeaderProvider? headerProvider)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
 
@@ -108,6 +155,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         allowInsecureHttp = options.AllowInsecureHttp;
         destinationPolicy = options.DestinationPolicy;
         this.signer = signer;
+        this.headerProvider = headerProvider;
         signingOptions = options.Signing;
     }
 
@@ -243,6 +291,23 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
                 AddCustomHeader(request, content, name, value);
             }
 
+            if (headerProvider is not null)
+            {
+                IReadOnlyDictionary<string, string> headers = await headerProvider
+                    .GetHeadersAsync(message, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (headers is null)
+                {
+                    throw new InvalidOperationException("The configured webhook request header provider returned null.");
+                }
+
+                foreach ((string name, string value) in headers)
+                {
+                    AddProviderHeader(request, name, value);
+                }
+            }
+
             if (signer is not null)
             {
                 DateTimeOffset timestamp = signingOptions.TimeProvider.GetUtcNow().ToUniversalTime();
@@ -271,6 +336,37 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         {
             request.Dispose();
             throw;
+        }
+    }
+
+    private static void AddProviderHeader(
+        HttpRequestMessage request,
+        string name,
+        string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        if (TransportControlledHeaderNames.Contains(name))
+        {
+            throw new InvalidOperationException($"The dynamic webhook header '{name}' is reserved by the default transport.");
+        }
+
+        if (value is null)
+        {
+            throw new InvalidOperationException($"The dynamic webhook header '{name}' value cannot be null.");
+        }
+
+        try
+        {
+            request.Headers.Add(name, value);
+        }
+        catch (InvalidOperationException)
+        {
+            throw new InvalidOperationException($"The dynamic webhook header '{name}' is not a supported request header.");
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException($"The dynamic webhook header '{name}' value is not valid for HTTP.");
         }
     }
 

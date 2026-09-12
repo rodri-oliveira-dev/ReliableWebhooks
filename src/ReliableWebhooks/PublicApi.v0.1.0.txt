@@ -48,6 +48,7 @@ M:public instance abstract newslot calling=Standard, HasThis System.Threading.Ta
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.Task`1<ReliableWebhooks.WebhookEnqueueResult> nullable=notnull<notnull> ReliableWebhooks.IWebhookEnqueueService.EnqueueAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.Threading.CancellationToken optional default=null)
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.Task`1<System.Collections.Generic.IReadOnlyList`1<ReliableWebhooks.WebhookDeliveryLease>> nullable=notnull<notnull<notnull>> ReliableWebhooks.IWebhookDeliveryStore.ClaimDueAsync(System.DateTimeOffset,System.TimeSpan,System.Int32,System.Threading.CancellationToken optional default=null)
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<ReliableWebhooks.WebhookDestinationPolicyResult> nullable=notnull<notnull> ReliableWebhooks.IWebhookDestinationPolicy.AuthorizeAsync(System.Uri nullable=notnull,System.Threading.CancellationToken optional default=null)
+M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<System.Collections.Generic.IReadOnlyDictionary`2<System.String,System.String>> nullable=notnull<notnull<notnull,notnull>> ReliableWebhooks.IWebhookRequestHeaderProvider.GetHeadersAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.Threading.CancellationToken optional default=null)
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<System.ReadOnlyMemory`1<System.Byte>> ReliableWebhooks.IWebhookSigningSecretProvider.GetSecretAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.Threading.CancellationToken optional default=null)
 M:public instance abstract newslot calling=Standard, HasThis System.Threading.Tasks.ValueTask`1<System.String> nullable=notnull<notnull> ReliableWebhooks.IWebhookRequestSigner.SignAsync(ReliableWebhooks.WebhookMessage nullable=notnull,System.ReadOnlyMemory`1<System.Byte>,System.DateTimeOffset,System.Threading.CancellationToken optional default=null)
 M:public instance calling=Standard, HasThis ReliableWebhooks.ReliableWebhooksBuilder nullable=notnull ReliableWebhooks.ReliableWebhooksBuilder.AddHostedDispatcher()
@@ -81,6 +82,7 @@ M:public instance specialname calling=Standard, HasThis ReliableWebhooks.Webhook
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookEnqueueStatus ReliableWebhooks.WebhookEnqueueResult.get_Status()
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookHttpTransport..ctor(System.Net.Http.HttpClient nullable=notnull,ReliableWebhooks.IWebhookHttpResponseClassifier nullable=nullable optional default=null,ReliableWebhooks.WebhookHttpTransportOptions nullable=nullable optional default=null)
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookHttpTransport..ctor(System.Net.Http.HttpClient nullable=notnull,ReliableWebhooks.IWebhookHttpResponseClassifier nullable=nullable,ReliableWebhooks.WebhookHttpTransportOptions nullable=nullable,ReliableWebhooks.IWebhookRequestSigner nullable=nullable)
+M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookHttpTransport..ctor(System.Net.Http.HttpClient nullable=notnull,ReliableWebhooks.IWebhookHttpResponseClassifier nullable=nullable,ReliableWebhooks.WebhookHttpTransportOptions nullable=nullable,ReliableWebhooks.IWebhookRequestSigner nullable=nullable,ReliableWebhooks.IWebhookRequestHeaderProvider nullable=nullable)
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookHttpTransportOptions nullable=notnull ReliableWebhooks.ReliableWebhooksOptions.get_Transport()
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookHttpTransportOptions..ctor()
 M:public instance specialname calling=Standard, HasThis ReliableWebhooks.WebhookMessage nullable=notnull ReliableWebhooks.WebhookDelivery.get_Message()
@@ -293,6 +295,7 @@ T:public interface ReliableWebhooks.IWebhookDestinationPolicy base=- interfaces=
 T:public interface ReliableWebhooks.IWebhookDispatcherDelay base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookEnqueueService base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookHttpResponseClassifier base=- interfaces=[]
+T:public interface ReliableWebhooks.IWebhookRequestHeaderProvider base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookRequestSigner base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookRetryJitterSource base=- interfaces=[]
 T:public interface ReliableWebhooks.IWebhookRetryPolicy base=- interfaces=[]

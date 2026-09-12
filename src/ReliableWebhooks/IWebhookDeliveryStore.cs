@@ -32,6 +32,13 @@ namespace ReliableWebhooks;
 /// the corresponding durable state change did not complete. Operations should observe cancellation before committing
 /// an externally visible state change when the supplied token is already canceled.
 /// </para>
+/// <para>
+/// Persisted <see cref="WebhookMessage"/> instances can contain sensitive delivery data, including destination URLs,
+/// payload bytes, content types, custom headers, and stored error text. Production stores must apply appropriate
+/// encryption at rest, access control, backup protection, and retention/deletion policies for those fields. Request
+/// credentials such as authorization tokens should be resolved at send time through <see cref="IWebhookRequestHeaderProvider"/>
+/// instead of being embedded in persisted message headers.
+/// </para>
 /// </remarks>
 public interface IWebhookDeliveryStore
 {

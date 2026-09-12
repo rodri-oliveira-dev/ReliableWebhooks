@@ -199,7 +199,25 @@ Header names can be customized through `WebhookHttpTransportOptions.Signing`. Ge
 
 `WebhookMessage.Id` and `WebhookMessage.EventType` must be non-empty and must not contain control characters such as CR, LF, or NUL because they are used in generated headers and telemetry. `WebhookMessage.ContentType` must be a syntactically valid HTTP media type, including vendor media types such as `application/vnd.example+json`.
 
-Custom headers supplied to `WebhookMessage` must use valid HTTP token names, are compared case-insensitively for duplicates, and must not contain control characters such as CR, LF, or NUL in their values. The default transport reserves routing and framing headers that message data must not control: `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, and `Proxy-Connection`. End-to-end application headers such as `Authorization` remain supported. Treat custom header values as sensitive whenever they come from tenants, subscribers, or other external configuration. Advanced users who need lower-level HTTP control should provide a custom `IWebhookDeliveryTransport`.
+Custom headers supplied to `WebhookMessage` must use valid HTTP token names, are compared case-insensitively for duplicates, and must not contain control characters such as CR, LF, or NUL in their values. The default transport reserves routing and framing headers that message data must not control: `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, and `Proxy-Connection`. Sensitive credential headers such as `Authorization` and `Cookie` are not accepted in the persisted message; resolve them at send time through `IWebhookRequestHeaderProvider` so queued attempts pick up rotation without rewriting stored deliveries. Treat custom header values as sensitive whenever they come from tenants, subscribers, or other external configuration. Advanced users who need lower-level HTTP control should provide a custom `IWebhookDeliveryTransport`.
+
+```csharp
+services.AddSingleton<IWebhookRequestHeaderProvider, MyWebhookCredentialHeaders>();
+
+internal sealed class MyWebhookCredentialHeaders : IWebhookRequestHeaderProvider
+{
+    public async ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
+        WebhookMessage message,
+        CancellationToken cancellationToken = default)
+    {
+        string token = await ResolveBearerTokenAsync(message, cancellationToken);
+        return new Dictionary<string, string>
+        {
+            ["Authorization"] = $"Bearer {token}",
+        };
+    }
+}
+```
 
 The `v1` canonical HMAC input is versioned and length-prefixed:
 

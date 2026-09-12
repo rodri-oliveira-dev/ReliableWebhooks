@@ -25,6 +25,10 @@ A durable implementation must preserve enough information to resume delivery aft
 
 `InMemoryWebhookDeliveryStore` implements the behavioral protocol but is process-local and loses all state when the process exits. It is suitable for tests, samples, and local scenarios only.
 
+Destination URIs, payload bytes, content types, custom headers, and stored error text are potentially sensitive delivery data. Production stores must protect those fields with storage-layer controls appropriate to the application's data classification, including encryption at rest, least-privilege database access, protected backups/snapshots, audited administrative access, and retention/deletion policies for terminal and dead-letter records. Do not rely on ReliableWebhooks logs or metrics as the only protection; a durable store and its backups can retain these values for longer than the running process.
+
+Do not persist request credentials casually as `WebhookMessage.Headers`. The default message contract rejects `Authorization` and `Cookie` so applications can resolve those values at send time through `IWebhookRequestHeaderProvider` instead. `Proxy-Authorization` is reserved by the default transport and should be configured through the application-owned HTTP proxy/handler if required. A send-time provider lets rotation affect queued future attempts without rewriting every persisted delivery. If a destination URL path or query string acts as a bearer credential, prefer an application-owned indirection such as a receiver identifier plus a send-time destination/credential lookup, or apply field-level protection/tokenization in the store and backup pipeline.
+
 ## Idempotent enqueue
 
 `EnqueueAsync` uses `WebhookMessage.Id` as the stable idempotency key.

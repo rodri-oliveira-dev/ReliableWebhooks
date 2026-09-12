@@ -75,13 +75,15 @@ public static class ReliableWebhooksServiceCollectionExtensions
         IWebhookHttpResponseClassifier classifier =
             serviceProvider.GetRequiredService<IWebhookHttpResponseClassifier>();
         IWebhookRequestSigner? signer = serviceProvider.GetService<IWebhookRequestSigner>();
+        IWebhookRequestHeaderProvider? headerProvider = serviceProvider.GetService<IWebhookRequestHeaderProvider>();
 
         return new HttpClientFactoryWebhookDeliveryTransport(
             httpClientFactory,
             DefaultHttpClientName,
             classifier,
             options.Transport,
-            signer);
+            signer,
+            headerProvider);
     }
 
     private static IWebhookEnqueueService CreateEnqueueService(IServiceProvider serviceProvider)

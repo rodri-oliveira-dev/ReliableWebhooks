@@ -12,6 +12,7 @@ public sealed class WebhookMessage
     {
         "Connection",
         "Content-Length",
+        "Cookie",
         "Expect",
         "Host",
         "Keep-Alive",
@@ -22,6 +23,7 @@ public sealed class WebhookMessage
         "Trailer",
         "Transfer-Encoding",
         "Upgrade",
+        "Authorization",
     };
 
     private readonly byte[] payload;
@@ -153,7 +155,7 @@ public sealed class WebhookMessage
         if (ReservedCustomHeaderNames.Contains(name))
         {
             throw new ArgumentException(
-                $"Custom header '{name}' is reserved by the default webhook transport.",
+                $"Custom header '{name}' is reserved by the default webhook transport or must be resolved at send time.",
                 paramName);
         }
     }

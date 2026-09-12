@@ -7,13 +7,15 @@ internal sealed class HttpClientFactoryWebhookDeliveryTransport : IWebhookDelive
     private readonly IWebhookHttpResponseClassifier classifier;
     private readonly WebhookHttpTransportOptions options;
     private readonly IWebhookRequestSigner? signer;
+    private readonly IWebhookRequestHeaderProvider? headerProvider;
 
     internal HttpClientFactoryWebhookDeliveryTransport(
         IHttpClientFactory httpClientFactory,
         string clientName,
         IWebhookHttpResponseClassifier classifier,
         WebhookHttpTransportOptions options,
-        IWebhookRequestSigner? signer)
+        IWebhookRequestSigner? signer,
+        IWebhookRequestHeaderProvider? headerProvider)
     {
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentException.ThrowIfNullOrWhiteSpace(clientName);
@@ -25,6 +27,7 @@ internal sealed class HttpClientFactoryWebhookDeliveryTransport : IWebhookDelive
         this.classifier = classifier;
         this.options = options;
         this.signer = signer;
+        this.headerProvider = headerProvider;
     }
 
     public async Task<WebhookDeliveryResult> SendAsync(
@@ -32,7 +35,7 @@ internal sealed class HttpClientFactoryWebhookDeliveryTransport : IWebhookDelive
         CancellationToken cancellationToken = default)
     {
         using HttpClient client = httpClientFactory.CreateClient(clientName);
-        WebhookHttpTransport transport = new(client, classifier, options, signer);
+        WebhookHttpTransport transport = new(client, classifier, options, signer, headerProvider);
         return await transport.SendAsync(message, cancellationToken).ConfigureAwait(false);
     }
 }
