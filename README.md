@@ -174,7 +174,7 @@ The integration depends only on `Microsoft.Extensions.*`; it does not require AS
 
 ### Signing webhooks
 
-Signing is enabled by supplying an `IWebhookRequestSigner`. The built-in `HmacSha256WebhookRequestSigner` resolves secret bytes through `IWebhookSigningSecretProvider`, so the library does not need to know whether secrets come from configuration, a secret manager, or another source.
+Signing is enabled by supplying an `IWebhookRequestSigner`. The built-in `HmacSha256WebhookRequestSigner` resolves secret bytes through `IWebhookSigningSecretProvider`, so the library does not need to know whether secrets come from configuration, a secret manager, or another source. It requires at least 32 bytes (256 bits) of cryptographically generated HMAC key material and rejects empty or shorter secrets before signing. Generate these bytes with a CSPRNG and store them in a secret manager; do not use passwords, passphrases, tenant names, or other low-entropy strings as signing secrets.
 
 ```csharp
 IWebhookSigningSecretProvider secretProvider = GetApplicationSecretProvider();
@@ -217,7 +217,7 @@ A receiver can verify a delivery independently by:
 5. encoding the digest as lowercase hexadecimal and prefixing it with `v1=`;
 6. comparing the calculated signature with the received signature using a constant-time comparison.
 
-Signing secrets are never included in library-generated exception messages or automatic telemetry. Applications should follow the same rule in custom secret providers and signers.
+Signing secrets are never included in library-generated exception messages or automatic telemetry. Applications should follow the same rule in custom secret providers and signers. Rotate secrets through your application secret provider and receiver configuration, and use different secrets for distinct trust audiences or receivers so one receiver compromise does not allow signatures to be forged for another.
 
 ## Observability
 

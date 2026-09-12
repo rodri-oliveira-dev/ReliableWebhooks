@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Webhook HTTP transport now requires HTTPS destinations by default; plaintext HTTP delivery requires explicit `WebhookHttpTransportOptions.AllowInsecureHttp` opt-in.
 - The DI-managed webhook `HttpClient` now disables automatic cookies to avoid hidden state sharing between deliveries.
 - Dispatcher delivery-scoped extension failures are isolated to the active delivery and progress through retry/dead-letter handling instead of stopping unrelated processing.
+- The built-in HMAC-SHA256 signer now rejects signing secrets shorter than 32 bytes (256 bits) so weak keys fail closed before delivery.
 
 ## [0.1.0] - 2026-09-12
 

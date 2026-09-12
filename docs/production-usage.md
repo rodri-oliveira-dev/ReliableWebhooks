@@ -228,7 +228,9 @@ services.AddSingleton<IWebhookSigningSecretProvider, MySigningSecretProvider>();
 services.AddSingleton<IWebhookRequestSigner, HmacSha256WebhookRequestSigner>();
 ```
 
-Secrets should come from a secret manager or another protected application source. Do not put shared secrets in logs, metrics, traces, source control, or exception messages.
+Secrets should come from a secret manager or another protected application source. The built-in HMAC-SHA256 signer requires at least 32 bytes (256 bits) of cryptographically generated key material and rejects empty or shorter secrets before signing. Generate those bytes with a CSPRNG, store them as secret material, and do not use passwords, passphrases, tenant names, or other low-entropy strings as HMAC secrets. Do not put shared secrets in logs, metrics, traces, source control, or exception messages.
+
+Plan rotation in the application-owned secret provider and receiver configuration. During a rotation window, receivers commonly accept the current and immediately previous secret while senders switch to the new one. Use different secrets for distinct trust audiences or receivers so a compromise in one integration cannot forge deliveries for another.
 
 With default signing options, requests contain:
 

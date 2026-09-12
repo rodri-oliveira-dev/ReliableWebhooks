@@ -14,6 +14,8 @@ namespace ReliableWebhooks;
 /// </remarks>
 public sealed class HmacSha256WebhookRequestSigner : IWebhookRequestSigner
 {
+    private const int MinimumSecretBytes = 32;
+
     private readonly IWebhookSigningSecretProvider secretProvider;
 
     /// <summary>
@@ -41,9 +43,10 @@ public sealed class HmacSha256WebhookRequestSigner : IWebhookRequestSigner
             .GetSecretAsync(message, cancellationToken)
             .ConfigureAwait(false);
 
-        if (secret.IsEmpty)
+        if (secret.Length < MinimumSecretBytes)
         {
-            throw new InvalidOperationException("The webhook signing secret cannot be empty.");
+            throw new InvalidOperationException(
+                "The webhook signing secret must contain at least 32 bytes (256 bits) of cryptographically generated key material.");
         }
 
         string timestampText = timestamp

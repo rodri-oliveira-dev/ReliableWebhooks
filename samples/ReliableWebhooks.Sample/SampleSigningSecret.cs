@@ -4,15 +4,19 @@ namespace ReliableWebhooks.Sample;
 
 internal sealed class SampleSigningSecret
 {
+    private const int MinimumSecretBytes = 32;
+
     private readonly byte[] value;
 
     public SampleSigningSecret(byte[] value)
     {
         ArgumentNullException.ThrowIfNull(value);
 
-        if (value.Length == 0)
+        if (value.Length < MinimumSecretBytes)
         {
-            throw new ArgumentException("The sample signing secret cannot be empty.", nameof(value));
+            throw new ArgumentException(
+                "The sample signing secret must contain at least 32 bytes (256 bits).",
+                nameof(value));
         }
 
         this.value = value.ToArray();
