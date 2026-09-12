@@ -4,7 +4,7 @@
 
 ReliableWebhooks is a .NET 10 library for building reliable outbound webhook delivery.
 
-It provides composable primitives for stable webhook identities, persistence and lease coordination, one-attempt HTTP delivery, response classification, and deterministic retry scheduling. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
+It provides composable primitives for stable webhook identities, persistence and lease coordination, one-attempt HTTP delivery, HMAC-SHA256 request signing, response classification, and deterministic retry scheduling. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
 
 > **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives described below; the built-in durable store and concurrent dispatcher are still part of the work required before the first public release.
 
@@ -19,9 +19,10 @@ ReliableWebhooks addresses those concerns by separating the delivery workflow in
 - a stable webhook message identity;
 - a persistence contract for enqueueing, claiming, leasing, retrying, and completing deliveries;
 - an HTTP transport that performs exactly one request attempt per call;
+- optional HMAC-SHA256 request signing over the exact outbound payload bytes;
 - transport-neutral success, retryable-failure, and permanent-failure outcomes;
 - a retry policy that calculates the next attempt without sleeping or blocking a worker;
-- replaceable abstractions for persistence, classification, and retry behavior.
+- replaceable abstractions for persistence, signing, classification, and retry behavior.
 
 ## How it works
 
@@ -30,9 +31,10 @@ A ReliableWebhooks delivery is designed around a small state machine rather than
 1. Create a `WebhookMessage` with a stable ID, event type, destination, exact payload bytes, content type, and optional headers.
 2. Enqueue it through `IWebhookDeliveryStore`. Duplicate enqueue attempts with the same stable ID are deterministic.
 3. A worker atomically claims due deliveries and receives an expiring `WebhookDeliveryLease`.
-4. `WebhookHttpTransport` performs one HTTP `POST` and returns a `WebhookDeliveryResult`.
-5. Successful and permanent failures can be persisted immediately. Retryable failures are passed to `IWebhookRetryPolicy`, which returns either a future `NextAttemptAt` or a dead-letter decision.
-6. The store records the resulting state so abandoned or failed work can be resumed safely.
+4. `WebhookHttpTransport` performs one HTTP `POST`; when a signer is configured, it signs the exact payload buffer used by the request and adds the delivery identity, event type, timestamp, and signature headers.
+5. The transport returns a `WebhookDeliveryResult` with a transport-neutral outcome.
+6. Successful and permanent failures can be persisted immediately. Retryable failures are passed to `IWebhookRetryPolicy`, which returns either a future `NextAttemptAt` or a dead-letter decision.
+7. The store records the resulting state so abandoned or failed work can be resumed safely.
 
 When combined with a durable store and dispatcher, the intended delivery model is **at-least-once**, not exactly-once. Receivers must therefore be idempotent and tolerate duplicate deliveries.
 
@@ -101,6 +103,47 @@ The one-minute lease intentionally exceeds the transport's default 30-second att
 
 `InMemoryWebhookDeliveryStore` is process-local and **not durable**. It exists for tests and samples only and must not be used as production persistence.
 
+### Signing webhooks
+
+Signing is enabled by supplying an `IWebhookRequestSigner`. The built-in `HmacSha256WebhookRequestSigner` resolves secret bytes through `IWebhookSigningSecretProvider`, so the library does not need to know whether secrets come from configuration, a secret manager, or another source.
+
+```csharp
+IWebhookSigningSecretProvider secretProvider = GetApplicationSecretProvider();
+IWebhookRequestSigner signer = new HmacSha256WebhookRequestSigner(secretProvider);
+
+var transport = new WebhookHttpTransport(
+    httpClient,
+    signer: signer);
+```
+
+With the default `WebhookSigningOptions`, each signed request contains:
+
+- `X-Webhook-Id`: the stable `WebhookMessage.Id`;
+- `X-Webhook-Event`: the `WebhookMessage.EventType`;
+- `X-Webhook-Timestamp`: the UTC Unix timestamp in seconds;
+- `X-Webhook-Signature`: `v1=<lowercase HMAC-SHA256 hex digest>`.
+
+Header names can be customized through `WebhookHttpTransportOptions.Signing`. Generated signing headers take precedence over custom message headers with the same names.
+
+The canonical HMAC input is:
+
+```text
+UTF8(unixTimestampSeconds + ".") || exactRequestPayloadBytes
+```
+
+The payload bytes are not reserialized or normalized before signing. The same byte array is used both for HMAC calculation and for the HTTP request content.
+
+A receiver can verify a delivery independently by:
+
+1. reading the timestamp and signature headers without modifying the request body;
+2. parsing the timestamp as Unix seconds and rejecting timestamps outside the receiver's replay-tolerance window;
+3. rebuilding the canonical bytes as UTF-8 `timestamp + "."` followed by the raw request body bytes;
+4. calculating HMAC-SHA256 with the shared secret;
+5. encoding the digest as lowercase hexadecimal and prefixing it with `v1=`;
+6. comparing the calculated signature with the received signature using a constant-time comparison.
+
+Signing secrets are never included in library-generated exception messages or automatic telemetry. Applications should follow the same rule in custom secret providers and signers.
+
 ### Handling the result
 
 The transport deliberately does not retry. It reports one attempt and leaves the state transition to the caller or dispatcher.
@@ -158,6 +201,9 @@ switch (result.Outcome)
 | Success classification | Any `2xx` response |
 | Retryable HTTP responses | `408`, `425`, `429`, and `5xx` |
 | Permanent HTTP responses | Other status codes, including redirects |
+| Signing algorithm | HMAC-SHA256 when a signer is configured |
+| Signing canonical format | `UTF8(unixTimestamp + ".") || payload bytes` |
+| Signing headers | `X-Webhook-Id`, `X-Webhook-Event`, `X-Webhook-Timestamp`, `X-Webhook-Signature` |
 | Maximum attempts | 5, including the current attempt |
 | Base retry delay | 1 second |
 | Maximum retry delay | 5 minutes |
@@ -176,10 +222,11 @@ ReliableWebhooks is designed around explicit delivery semantics:
 - **Stable IDs support duplicate-safe enqueueing.** Receivers still need application-level idempotency.
 - **Leases coordinate active ownership.** While a lease is valid, two workers should not own the same delivery simultaneously; expired work can be reclaimed.
 - **One transport call means one HTTP attempt.** Retry loops are intentionally outside the transport.
+- **Signed payloads use exact request bytes.** Receivers must verify the raw body rather than a parsed/reserialized representation.
 - **Retry policies schedule; they do not wait.** `DefaultWebhookRetryPolicy` returns a future timestamp or dead-letter decision and never calls `Task.Delay`.
 - **Persistence is replaceable.** The core package does not depend on a specific database provider.
 
-The current development version does not yet include the production durable EF Core store, concurrent dispatcher, HMAC signing, dependency-injection integration, or observability planned for v0.1.0.
+The current development version does not yet include the production durable EF Core store, concurrent dispatcher, dependency-injection integration, or observability planned for v0.1.0.
 
 ## Extensibility
 
@@ -188,9 +235,11 @@ The main behaviors are exposed through public abstractions:
 - `IWebhookDeliveryStore` — persistence and lease coordination;
 - `IWebhookHttpResponseClassifier` — HTTP response classification;
 - `IWebhookRetryPolicy` — retry and dead-letter decisions;
-- `IWebhookRetryJitterSource` — deterministic or custom jitter generation.
+- `IWebhookRetryJitterSource` — deterministic or custom jitter generation;
+- `IWebhookRequestSigner` — request-signing strategy;
+- `IWebhookSigningSecretProvider` — per-message signing secret resolution.
 
-This keeps persistence, transport behavior, and retry strategy independently replaceable and testable.
+This keeps persistence, transport behavior, signing, and retry strategy independently replaceable and testable.
 
 ## Support and contribution
 
