@@ -210,6 +210,8 @@ A claim creates a lease. The lease token is proof of active ownership. State tra
 
 While a delivery attempt is running, `WebhookDispatcher` renews the active lease every half `LeaseDuration`, capped at a 30-second renewal interval. Renewal keeps the same lease token and does not increment the attempt count. If renewal loses ownership or fails, the dispatcher cancels the in-flight attempt when possible and leaves the delivery for the current owner or future recovery instead of persisting a stale outcome.
 
+For distributed durable stores, lease eligibility and renewal must be evaluated with one authoritative clock at the store/coordination boundary. Prefer backend/store time over individual worker clocks. If an adapter accepts worker-provided time, document and enforce a bounded-skew rule so a fast worker cannot prematurely reclaim another worker's active lease.
+
 Shutdown is two-phase:
 
 1. stop claiming new work;

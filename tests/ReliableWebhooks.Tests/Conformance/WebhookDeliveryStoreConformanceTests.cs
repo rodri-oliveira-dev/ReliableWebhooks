@@ -155,6 +155,12 @@ public abstract class WebhookDeliveryStoreConformanceTests
             await store.ClaimDueAsync(Now, LeaseDuration, 1, cancellationToken));
         Assert.Empty(
             await store.ClaimDueAsync(Now.AddSeconds(59), LeaseDuration, 1, cancellationToken));
+        Assert.Empty(
+            await store.ClaimDueAsync(
+                Now.Add(LeaseDuration).AddTicks(-1),
+                LeaseDuration,
+                1,
+                cancellationToken));
 
         WebhookDeliveryLease second = Assert.Single(
             await store.ClaimDueAsync(Now.AddMinutes(1), LeaseDuration, 1, cancellationToken));

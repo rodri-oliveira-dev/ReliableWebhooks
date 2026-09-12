@@ -50,6 +50,14 @@ Competing workers must never both receive simultaneously valid leases for the sa
 
 The concrete atomicity mechanism is intentionally left to the adapter. Transactions, conditional updates, optimistic concurrency, row/version tokens, compare-and-set operations, or storage-specific claim primitives are all valid approaches.
 
+## Authoritative clock
+
+Claim, renewal, and lease-expiration decisions must use one authoritative clock for the store's coordination boundary. `InMemoryWebhookDeliveryStore` and deterministic tests use the caller-supplied `now` value as that authority because all workers are in one process.
+
+Distributed durable stores should prefer backend/store time, such as a database server timestamp or another shared coordination clock, when deciding whether work is due or a lease has expired. If an adapter instead relies on worker-provided time, it must define and enforce a maximum skew/tolerance rule that is strong enough to prevent two workers with different clocks from owning the same delivery at the same time.
+
+Retry scheduling and terminal timestamps may use the dispatcher-supplied operation time, but a store must never let a worker's fast local clock prematurely expire another worker's active lease outside the documented authoritative-time model.
+
 ## Lease renewal and stale ownership
 
 `WebhookDispatcher` renews an in-flight delivery lease while the transport attempt is still running. The renewal cadence is one half of `Dispatcher.LeaseDuration`, capped at 30 seconds, so renewal normally happens with a safety margin instead of waiting for the expiration boundary.

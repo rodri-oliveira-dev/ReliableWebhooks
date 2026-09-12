@@ -22,6 +22,12 @@ namespace ReliableWebhooks;
 /// the current owner or delivery state.
 /// </para>
 /// <para>
+/// Claim, renewal, and lease-expiration decisions must be evaluated against one authoritative clock for the store's
+/// coordination boundary. Process-local stores may use the supplied <c>now</c> value as that authority. Distributed
+/// durable stores should derive the effective time from the backing store or another shared coordination clock, or
+/// otherwise enforce and document a bounded-skew rule that prevents simultaneously valid owners.
+/// </para>
+/// <para>
 /// Persistence failures must be surfaced to the caller; implementations must never report a successful transition when
 /// the corresponding durable state change did not complete. Operations should observe cancellation before committing
 /// an externally visible state change when the supplied token is already canceled.
@@ -48,14 +54,15 @@ public interface IWebhookDeliveryStore
     /// <summary>
     /// Atomically claims up to <paramref name="maxCount"/> due deliveries for processing.
     /// </summary>
-    /// <param name="now">The time used to evaluate due work and expired leases.</param>
+    /// <param name="now">The authoritative operation time used to evaluate due work and expired leases.</param>
     /// <param name="leaseDuration">The positive duration granted to each claimed delivery.</param>
     /// <param name="maxCount">The positive maximum number of deliveries to claim.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>
     /// At most <paramref name="maxCount"/> leases owned by the caller. Eligible work consists of pending or failed
-    /// deliveries whose next-attempt time is less than or equal to <paramref name="now"/>, plus in-progress deliveries
-    /// whose lease has expired at or before <paramref name="now"/>. No ordering between eligible deliveries is required.
+    /// deliveries whose next-attempt time is less than or equal to the effective authoritative operation time, plus
+    /// in-progress deliveries whose lease has expired at or before that same time. No ordering between eligible
+    /// deliveries is required.
     /// </returns>
     /// <remarks>
     /// Each successful claim transitions the delivery to <see cref="DeliveryState.InProgress"/>, increments the attempt
@@ -72,8 +79,8 @@ public interface IWebhookDeliveryStore
     /// Renews an active lease owned by the caller.
     /// </summary>
     /// <param name="lease">The current lease proving ownership.</param>
-    /// <param name="now">The time used to validate lease freshness.</param>
-    /// <param name="leaseDuration">The positive lease duration measured from <paramref name="now"/>.</param>
+    /// <param name="now">The authoritative operation time used to validate lease freshness.</param>
+    /// <param name="leaseDuration">The positive lease duration measured from the effective authoritative operation time.</param>
     /// <param name="cancellationToken">A token used to cancel the operation.</param>
     /// <returns>The renewed lease snapshot using the same ownership token.</returns>
     /// <remarks>
