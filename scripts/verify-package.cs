@@ -56,11 +56,23 @@ AssertEqual("nuget-icon.png", metadata.Element(ns + "icon")?.Value, "PackageIcon
 var license = metadata.Element(ns + "license");
 AssertEqual("expression", license?.Attribute("type")?.Value, "LicenseType");
 AssertEqual("MIT", license?.Value, "LicenseExpression");
+AssertEqual("https://github.com/rodri-oliveira-dev/ReliableWebhooks", metadata.Element(ns + "projectUrl")?.Value, "PackageProjectUrl");
+AssertDependencies(metadata, ns);
 AssertDeprecatedMetadataAbsent(metadata, ns);
 
 if (!string.IsNullOrWhiteSpace(expectedVersion))
 {
     AssertEqual(expectedVersion, metadata.Element(ns + "version")?.Value, "Version");
+}
+
+var readmeEntry = packageArchive.GetEntry("README.md")
+    ?? throw new InvalidOperationException("README.md não encontrado no .nupkg.");
+using (var readmeReader = new StreamReader(readmeEntry.Open()))
+{
+    string packagedReadme = readmeReader.ReadToEnd();
+    AssertContains(packagedReadme, "dotnet add package ReliableWebhooks --version 0.1.0", "Package README installation command");
+    AssertContains(packagedReadme, "InMemoryWebhookDeliveryStore", "Package README durability warning");
+    AssertContains(packagedReadme, "not durable", "Package README durability warning");
 }
 
 var assemblyEntry = packageArchive.GetEntry("lib/net10.0/ReliableWebhooks.dll")
@@ -103,6 +115,7 @@ if (!string.IsNullOrWhiteSpace(expectedVersion))
 var repository = metadata.Element(ns + "repository");
 var repositoryUrl = repository?.Attribute("url")?.Value;
 var repositoryCommit = repository?.Attribute("commit")?.Value;
+AssertEqual("https://github.com/rodri-oliveira-dev/ReliableWebhooks", repositoryUrl, "RepositoryUrl");
 
 if (repository is not null)
 {
@@ -240,6 +253,41 @@ static void AssertPackageTags(string? tags)
         {
             throw new InvalidOperationException($"PackageTags deve incluir '{tag}'.");
         }
+    }
+}
+
+static void AssertContains(string value, string expected, string field)
+{
+    if (!value.Contains(expected, StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException($"{field}: expected content '{expected}' was not found.");
+    }
+}
+
+static void AssertDependencies(XElement metadata, XNamespace ns)
+{
+    HashSet<string> expected = new(StringComparer.Ordinal)
+    {
+        "Microsoft.Extensions.DependencyInjection.Abstractions",
+        "Microsoft.Extensions.Hosting.Abstractions",
+        "Microsoft.Extensions.Http",
+        "Microsoft.Extensions.Logging.Abstractions",
+        "Microsoft.Extensions.Options",
+    };
+
+    HashSet<string> actual = metadata
+        .Descendants(ns + "dependency")
+        .Select(static dependency => dependency.Attribute("id")?.Value)
+        .Where(static id => !string.IsNullOrWhiteSpace(id))
+        .Select(static id => id!)
+        .ToHashSet(StringComparer.Ordinal);
+
+    if (!actual.SetEquals(expected))
+    {
+        string expectedText = string.Join(", ", expected.OrderBy(static item => item, StringComparer.Ordinal));
+        string actualText = string.Join(", ", actual.OrderBy(static item => item, StringComparer.Ordinal));
+        throw new InvalidOperationException(
+            $"Package dependencies differ from the reviewed v0.1.0 set. Expected: {expectedText}. Actual: {actualText}.");
     }
 }
 

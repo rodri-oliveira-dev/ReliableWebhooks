@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-12
+
 ### Added
 
 - Core webhook contracts for immutable messages, delivery lifecycle states, delivery attempts, and delivery snapshots.
@@ -26,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Release validation with semantic-version checks, reproducible artifacts, GitHub Releases, and optional NuGet.org Trusted Publishing through GitHub OIDC.
 - Portable VS Code recommendations and repository development tasks.
 - English and Brazilian Portuguese project documentation.
+- v0.1.0 release hardening with an explicit public API snapshot, clean package-consumer validation, dual NuGet.org/GitHub Packages publication, and documented release gates.
 
 ### Changed
 

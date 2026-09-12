@@ -1,12 +1,18 @@
 # ReliableWebhooks
 
+[![CI](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/ci.yml)
+[![Release](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/release.yml/badge.svg)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/release.yml)
+[![NuGet](https://img.shields.io/nuget/v/ReliableWebhooks.svg)](https://www.nuget.org/packages/ReliableWebhooks/)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 **English** | [Português (Brasil)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/README.pt-BR.md)
 
 ReliableWebhooks is a .NET 10 library for building reliable outbound webhook delivery.
 
 It provides composable primitives for stable webhook identities, persistence and lease coordination, bounded concurrent dispatching, one-attempt HTTP delivery, HMAC-SHA256 request signing, response classification, deterministic retry scheduling, backend-neutral observability, and standard .NET dependency-injection/hosting integration. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
 
-> **Status:** v0.1.0 is under development. The first public NuGet package has not been released yet. The current version provides the reliability primitives, concurrent dispatcher, signing, observability, dependency injection, and optional hosted-dispatcher integration described below. The core defines a technology-agnostic `IWebhookDeliveryStore` contract and conformance semantics; production applications provide the durable store that fits their persistence stack.
+> **v0.1.0 scope:** the first public release line provides the reliable-delivery engine, technology-agnostic `IWebhookDeliveryStore` contract, retries, leasing, signing, observability, dependency injection, hosted dispatching, and production guidance. Production restart durability is supplied by a consumer-provided conforming durable store.
 
 ## Why ReliableWebhooks?
 
@@ -44,9 +50,7 @@ When combined with a durable store, the intended delivery model is **at-least-on
 
 ## Installation
 
-The planned NuGet package ID is `ReliableWebhooks` and the library targets `net10.0`.
-
-The first public package has not been published yet. After the v0.1.0 release, installation will be:
+The NuGet package ID is `ReliableWebhooks` and the library targets `net10.0`. Install v0.1.0 with:
 
 ```bash
 dotnet add package ReliableWebhooks --version 0.1.0
@@ -57,6 +61,18 @@ or:
 ```xml
 <PackageReference Include="ReliableWebhooks" Version="0.1.0" />
 ```
+
+## v0.1.0 boundaries
+
+The first public release intentionally keeps persistence technology-agnostic:
+
+- no production durable store is bundled; applications register a conforming `IWebhookDeliveryStore`;
+- `InMemoryWebhookDeliveryStore` is non-durable and intended only for tests, samples, and local development;
+- delivery is at-least-once when backed by a conforming durable store, so receivers must be idempotent;
+- exactly-once delivery, receiver-side idempotency, automatic dead-letter replay, and secret-rotation policy are not guaranteed;
+- EF Core, Dapper, ADO.NET, Redis, files, document databases, and other persistence technologies are optional consumer choices, not core dependencies.
+
+See [`docs/production-usage.md`](docs/production-usage.md) for production integration and [`docs/release-v0.1.0.md`](docs/release-v0.1.0.md) for release/distribution details.
 
 ## Quick start
 
