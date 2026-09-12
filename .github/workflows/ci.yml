@@ -199,6 +199,29 @@ jobs:
       - name: Compilar
         run: dotnet build ReliableWebhooks.slnx --configuration Release --no-restore
 
+      - name: Validar snapshot da API pública v0.1.0
+        run: dotnet run --file scripts/verify-public-api.cs -- src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll src/ReliableWebhooks/PublicApi.v0.1.0.txt
+
+      - name: Validar gate opcional de Trusted Publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(mktemp)"
+
+          SHOULD_PUBLISH=false GITHUB_OUTPUT="$output" bash scripts/resolve-nuget-publishing.sh
+          grep -Fq 'nuget_publishing_enabled=false' "$output"
+          grep -Fq 'nuget_publishing_reason=release-disabled' "$output"
+
+          : > "$output"
+          SHOULD_PUBLISH=true NUGET_USER= GITHUB_OUTPUT="$output" bash scripts/resolve-nuget-publishing.sh
+          grep -Fq 'nuget_publishing_enabled=false' "$output"
+          grep -Fq 'nuget_publishing_reason=nuget-user-not-configured' "$output"
+
+          : > "$output"
+          SHOULD_PUBLISH=true NUGET_USER=rodri-oliveira-dev GITHUB_OUTPUT="$output" bash scripts/resolve-nuget-publishing.sh
+          grep -Fq 'nuget_publishing_enabled=true' "$output"
+          grep -Fq 'nuget_publishing_reason=enabled' "$output"
+
       - name: Executar sample end-to-end
         shell: bash
         run: |
@@ -240,38 +263,12 @@ jobs:
       - name: Validar pacote, símbolos e Source Link
         run: dotnet run --file scripts/verify-package.cs -- artifacts/packages --require-source-link
 
-      - name: Validar consumo do pacote local
+      - name: Validar consumo do pacote local com store customizado
         shell: bash
         run: |
           project="src/ReliableWebhooks/ReliableWebhooks.csproj"
           version="$(dotnet msbuild "$project" -nologo -getProperty:PackageVersion | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -n 1)"
-          consumer="$(mktemp -d)"
-
-          dotnet new console --framework net10.0 --output "$consumer"
-          consumer_project="$(find "$consumer" -maxdepth 1 -name '*.csproj' -print -quit)"
-
-          if [ -z "$consumer_project" ]; then
-            echo "Projeto consumidor temporário não foi criado."
-            exit 1
-          fi
-
-          dotnet add "$consumer_project" package ReliableWebhooks \
-            --version "$version" \
-            --source "$GITHUB_WORKSPACE/artifacts/packages"
-
-          cat > "$consumer/Program.cs" <<'EOF'
-          using ReliableWebhooks;
-
-          _ = new WebhookMessage(
-              "consumer-smoke-test",
-              "consumer.test",
-              new Uri("https://example.test/webhooks"),
-              Array.Empty<byte>(),
-              "application/json");
-          Console.WriteLine("ReliableWebhooks package consumed successfully.");
-          EOF
-
-          dotnet build "$consumer_project" --configuration Release --no-restore
+          bash scripts/verify-package-consumer.sh artifacts/packages "$version"
 
       - name: Verificar baseline de governança
         shell: bash

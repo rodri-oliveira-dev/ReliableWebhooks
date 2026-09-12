@@ -12,6 +12,10 @@ on:
       - scripts/resolve-release-request.sh
       - scripts/resolve-nuget-publishing.sh
       - scripts/verify-package.cs
+      - scripts/verify-package-consumer.sh
+      - scripts/verify-public-api.cs
+      - src/ReliableWebhooks/PublicApi.v0.1.0.txt
+      - docs/release-v0.1.0.md
       - src/**
       - tests/**
       - Directory.Build.props
@@ -29,7 +33,7 @@ on:
         required: true
         type: string
       publish:
-        description: Publish the validated package through NuGet Trusted Publishing and GitHub Release.
+        description: Publish the validated package to GitHub Packages and GitHub Release, plus NuGet.org when Trusted Publishing is configured.
         required: true
         default: false
         type: boolean
@@ -174,6 +178,12 @@ jobs:
           --no-restore
           -p:Version="$RELEASE_VERSION"
 
+      - name: Verify public API snapshot
+        run: >-
+          dotnet run --file scripts/verify-public-api.cs --
+          src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll
+          src/ReliableWebhooks/PublicApi.v0.1.0.txt
+
       - name: Run tests
         run: dotnet test ReliableWebhooks.slnx --configuration Release --no-build
 
@@ -194,6 +204,11 @@ jobs:
           dotnet run --file scripts/verify-package.cs -- artifacts/release
           --require-source-link
           --expected-version "$RELEASE_VERSION"
+
+      - name: Validate clean consumer with custom store
+        env:
+          RELEASE_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: bash scripts/verify-package-consumer.sh artifacts/release "$RELEASE_VERSION"
 
       - name: Generate release manifest and checksums
         env:
@@ -227,6 +242,7 @@ jobs:
     environment: release
     permissions:
       contents: write
+      packages: write
       id-token: write
       attestations: write
       artifact-metadata: write
@@ -253,7 +269,7 @@ jobs:
           fi
 
           if [[ "$NUGET_PUBLISHING_ENABLED" != "true" ]]; then
-            echo "NuGet publication is skipped because NUGET_USER is not configured."
+            echo "NuGet.org publication is disabled because NUGET_USER is not configured; GitHub outputs remain enabled."
           fi
 
           if [[ "$VALIDATED_SHA" != "$GITHUB_SHA" ]]; then
@@ -302,10 +318,11 @@ jobs:
             artifacts/release/release-manifest.json
             artifacts/release/SHA256SUMS
 
-      - name: Create or resume draft GitHub Release
+      - name: Create or verify release tag
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          VALIDATED_SHA: ${{ needs.build.outputs.commit }}
         run: |
           set -euo pipefail
 
@@ -313,53 +330,25 @@ jobs:
 
           if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
             existing_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
-            if [[ "${existing_commit}" != "${GITHUB_SHA}" ]]; then
-              echo "Tag ${RELEASE_TAG} already points to ${existing_commit}, not ${GITHUB_SHA}." >&2
+            if [[ "${existing_commit}" != "${VALIDATED_SHA}" ]]; then
+              echo "Tag ${RELEASE_TAG} already points to ${existing_commit}, not validated SHA ${VALIDATED_SHA}." >&2
               exit 3
             fi
+          else
+            if ! gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/${RELEASE_TAG}" \
+              -f sha="${VALIDATED_SHA}" >/dev/null; then
+              echo "Tag creation did not complete cleanly; re-fetching to detect a concurrent creator."
+            fi
+
+            git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
           fi
 
-          tag_exists=false
-          if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
-            tag_exists=true
-          fi
-
-          release_state="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
-          if [[ "${release_state}" == "false" ]]; then
-            echo "Release ${RELEASE_TAG} is already published; refusing to mutate an immutable release." >&2
+          tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if [[ "${tag_commit}" != "${VALIDATED_SHA}" ]]; then
+            echo "Tag ${RELEASE_TAG} resolves to ${tag_commit}, not validated SHA ${VALIDATED_SHA}." >&2
             exit 3
           fi
-
-          if [[ "${release_state}" == "true" && "${tag_exists}" != "true" ]]; then
-            release_target="$(gh release view "${RELEASE_TAG}" --json targetCommitish --jq '.targetCommitish')"
-            if [[ "${release_target}" != "${GITHUB_SHA}" ]]; then
-              echo "Draft release ${RELEASE_TAG} targets ${release_target}, not validated SHA ${GITHUB_SHA}." >&2
-              exit 3
-            fi
-          fi
-
-          if [[ -z "${release_state}" ]]; then
-            if [[ "${tag_exists}" == "true" ]]; then
-              gh release create "${RELEASE_TAG}" \
-                --verify-tag \
-                --draft \
-                --generate-notes \
-                --title "${RELEASE_TAG}"
-            else
-              gh release create "${RELEASE_TAG}" \
-                --target "${GITHUB_SHA}" \
-                --draft \
-                --generate-notes \
-                --title "${RELEASE_TAG}"
-            fi
-          fi
-
-          gh release upload "${RELEASE_TAG}" \
-            "artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.nupkg" \
-            "artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.snupkg" \
-            artifacts/release/release-manifest.json \
-            artifacts/release/SHA256SUMS \
-            --clobber
 
       - name: Authenticate to NuGet.org with Trusted Publishing
         if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
@@ -380,6 +369,55 @@ jobs:
           --source https://api.nuget.org/v3/index.json
           --api-key "$NUGET_API_KEY"
           --skip-duplicate
+
+      - name: Publish package to GitHub Packages
+        env:
+          GITHUB_PACKAGES_TOKEN: ${{ github.token }}
+          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          GITHUB_PACKAGES_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+        run: >-
+          dotnet nuget push
+          "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --source "$GITHUB_PACKAGES_SOURCE"
+          --api-key "$GITHUB_PACKAGES_TOKEN"
+          --skip-duplicate
+
+      - name: Create or resume draft GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          VALIDATED_SHA: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin
+          existing_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if [[ "${existing_commit}" != "${VALIDATED_SHA}" ]]; then
+            echo "Tag ${RELEASE_TAG} points to ${existing_commit}, not validated SHA ${VALIDATED_SHA}." >&2
+            exit 3
+          fi
+
+          release_state="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [[ "${release_state}" == "false" ]]; then
+            echo "Release ${RELEASE_TAG} is already published; refusing to mutate an immutable release." >&2
+            exit 3
+          fi
+
+          if [[ -z "${release_state}" ]]; then
+            gh release create "${RELEASE_TAG}" \
+              --verify-tag \
+              --draft \
+              --generate-notes \
+              --title "${RELEASE_TAG}"
+          fi
+
+          gh release upload "${RELEASE_TAG}" \
+            "artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.nupkg" \
+            "artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.snupkg" \
+            artifacts/release/release-manifest.json \
+            artifacts/release/SHA256SUMS \
+            --clobber
 
       - name: Publish GitHub Release
         env:

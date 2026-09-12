@@ -1,12 +1,18 @@
 # ReliableWebhooks
 
+[![CI](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/ci.yml)
+[![Release](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/release.yml/badge.svg)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/release.yml)
+[![NuGet](https://img.shields.io/nuget/v/ReliableWebhooks.svg)](https://www.nuget.org/packages/ReliableWebhooks/)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 [English](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/README.md) | **Português (Brasil)**
 
 ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiável de webhooks de saída.
 
 Ela fornece componentes combináveis para identidade estável de webhooks, persistência e coordenação por lease, dispatch concorrente limitado, envio HTTP de uma única tentativa, assinatura HMAC-SHA256, classificação de respostas, agendamento determinístico de retries, observabilidade independente de backend e integração com injeção de dependência/hosting padrão do .NET. O objetivo é tornar explícitas as preocupações de confiabilidade da entrega de webhooks, em vez de escondê-las dentro de um loop de background opaco.
 
-> **Status:** a v0.1.0 está em desenvolvimento. O primeiro pacote público no NuGet ainda não foi lançado. A versão atual fornece os componentes de confiabilidade, dispatcher concorrente, assinatura, observabilidade, injeção de dependência e integração opcional com hosted dispatcher descritos abaixo. O core define um contrato `IWebhookDeliveryStore` independente de tecnologia e suas semânticas de conformidade; aplicações de produção fornecem o store durável adequado à sua stack de persistência.
+> **Escopo da v0.1.0:** a primeira linha pública fornece o engine de entrega confiável, contrato `IWebhookDeliveryStore` independente de tecnologia, retries, leases, assinatura, observabilidade, injeção de dependência, hosted dispatcher e orientação de produção. A durabilidade entre reinícios é fornecida por um store durável e aderente ao contrato escolhido pela aplicação.
 
 ## Por que ReliableWebhooks?
 
@@ -44,9 +50,7 @@ Quando combinado com um store durável, o modelo de entrega pretendido é **at-l
 
 ## Instalação
 
-O Package ID planejado para o NuGet é `ReliableWebhooks` e a biblioteca tem como target `net10.0`.
-
-O primeiro pacote público ainda não foi publicado. Após a release v0.1.0, a instalação será:
+O Package ID no NuGet é `ReliableWebhooks` e a biblioteca tem como target `net10.0`. Instale a v0.1.0 com:
 
 ```bash
 dotnet add package ReliableWebhooks --version 0.1.0
@@ -57,6 +61,18 @@ ou:
 ```xml
 <PackageReference Include="ReliableWebhooks" Version="0.1.0" />
 ```
+
+## Limites da v0.1.0
+
+A primeira release pública mantém a persistência intencionalmente independente de tecnologia:
+
+- nenhum store durável de produção é incluído; a aplicação registra um `IWebhookDeliveryStore` aderente ao contrato;
+- `InMemoryWebhookDeliveryStore` não é durável e serve apenas para testes, samples e desenvolvimento local;
+- a entrega é at-least-once quando apoiada por um store durável aderente, portanto receivers devem ser idempotentes;
+- exactly-once, idempotência no receiver, replay automático de dead letters e política de rotação de secrets não são garantidos;
+- EF Core, Dapper, ADO.NET, Redis, arquivos, bancos de documentos e outras tecnologias são escolhas opcionais do consumidor, não dependências do core.
+
+Consulte [`docs/production-usage.md`](docs/production-usage.md) para integração de produção e [`docs/release-v0.1.0.md`](docs/release-v0.1.0.md) para detalhes da release/distribuição.
 
 ## Começando
 

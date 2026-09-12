@@ -20,7 +20,7 @@ if [[ "$should_publish" != "true" ]]; then
   echo 'NuGet publication disabled: release publication gate is disabled.'
 elif [[ -z "$trimmed_user" ]]; then
   nuget_publishing_reason='nuget-user-not-configured'
-  echo 'NuGet publication disabled: NUGET_USER is not configured or is empty.'
+  echo 'NuGet publication disabled: NUGET_USER is not configured or is empty; GitHub release outputs remain enabled.'
 else
   nuget_publishing_enabled=true
   nuget_publishing_reason='enabled'
