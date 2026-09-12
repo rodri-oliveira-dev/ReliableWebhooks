@@ -200,6 +200,46 @@ public sealed class WebhookMessageTests
         Assert.Throws<ArgumentException>(() => CreateMessage(headers: headers));
     }
 
+    [Theory]
+    [InlineData("Connection")]
+    [InlineData("Content-Length")]
+    [InlineData("Expect")]
+    [InlineData("Host")]
+    [InlineData("Keep-Alive")]
+    [InlineData("Proxy-Authenticate")]
+    [InlineData("Proxy-Authorization")]
+    [InlineData("Proxy-Connection")]
+    [InlineData("TE")]
+    [InlineData("Trailer")]
+    [InlineData("Transfer-Encoding")]
+    [InlineData("Upgrade")]
+    [InlineData("host")]
+    [InlineData("tRaNsFeR-eNcOdInG")]
+    public void ConstructorRejectsReservedCustomHeadersUsingCaseInsensitiveComparison(string headerName)
+    {
+        Dictionary<string, string> headers = new()
+        {
+            [headerName] = "value",
+        };
+
+        ArgumentException exception = Assert.Throws<ArgumentException>(() => CreateMessage(headers: headers));
+
+        Assert.Equal("headers", exception.ParamName);
+        Assert.Contains("reserved", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ConstructorAcceptsAuthorizationHeader()
+    {
+        WebhookMessage message = CreateMessage(
+            headers: new Dictionary<string, string>
+            {
+                ["Authorization"] = "Bearer test-token",
+            });
+
+        Assert.Equal("Bearer test-token", message.Headers["authorization"]);
+    }
+
     private static WebhookMessage CreateMessage(
         string id = "webhook-123",
         string eventType = "order.created",

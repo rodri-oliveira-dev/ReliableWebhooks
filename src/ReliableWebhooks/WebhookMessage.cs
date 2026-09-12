@@ -8,6 +8,22 @@ namespace ReliableWebhooks;
 /// </summary>
 public sealed class WebhookMessage
 {
+    private static readonly HashSet<string> ReservedCustomHeaderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Connection",
+        "Content-Length",
+        "Expect",
+        "Host",
+        "Keep-Alive",
+        "Proxy-Authenticate",
+        "Proxy-Authorization",
+        "Proxy-Connection",
+        "TE",
+        "Trailer",
+        "Transfer-Encoding",
+        "Upgrade",
+    };
+
     private readonly byte[] payload;
 
     /// <summary>
@@ -22,8 +38,8 @@ public sealed class WebhookMessage
     /// <exception cref="ArgumentException">
     /// A required string value is empty or whitespace, <paramref name="id"/> or <paramref name="eventType"/>
     /// contains a control character, <paramref name="contentType"/> is not a valid HTTP media type, a header
-    /// name is invalid, a header value contains a control character, or <paramref name="destination"/> is not
-    /// an absolute HTTP or HTTPS URI.
+    /// name is invalid or reserved by the default transport, a header value contains a control character, or
+    /// <paramref name="destination"/> is not an absolute HTTP or HTTPS URI.
     /// </exception>
     /// <exception cref="ArgumentNullException"><paramref name="destination"/> is <see langword="null"/>.</exception>
     public WebhookMessage(
@@ -118,6 +134,7 @@ public sealed class WebhookMessage
         foreach ((string name, string value) in headers)
         {
             ValidateHeaderName(name, nameof(headers));
+            ValidateHeaderIsNotReserved(name, nameof(headers));
 
             if (value is null)
             {
@@ -129,6 +146,16 @@ public sealed class WebhookMessage
         }
 
         return new ReadOnlyDictionary<string, string>(copy);
+    }
+
+    private static void ValidateHeaderIsNotReserved(string name, string paramName)
+    {
+        if (ReservedCustomHeaderNames.Contains(name))
+        {
+            throw new ArgumentException(
+                $"Custom header '{name}' is reserved by the default webhook transport.",
+                paramName);
+        }
     }
 
     private static void ValidateHeaderName(string name, string paramName)
