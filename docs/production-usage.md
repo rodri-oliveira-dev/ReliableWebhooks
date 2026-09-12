@@ -8,7 +8,7 @@ For a runnable local example, see [`samples/ReliableWebhooks.Sample`](../samples
 
 ReliableWebhooks is designed for **at-least-once delivery**, not exactly-once delivery. A delivery can reach the receiver more than once when a worker sends the HTTP request successfully but fails before persisting the successful transition, or when a lease expires while ownership is uncertain.
 
-Receivers must therefore be idempotent. Use the stable `X-Webhook-Id` value, or an application-defined idempotency key carried in the payload, to record completed processing and safely ignore duplicate deliveries.
+Receivers must therefore be idempotent. Prefer a stable application identifier carried inside the signed payload. The default `X-Webhook-Id` header is useful for correlation, but it is not part of the default HMAC canonical bytes; if a receiver uses that header as its idempotency key, it should first verify the signature and cross-check the header against an identifier inside the signed payload.
 
 At-least-once behavior across application restarts additionally requires a conforming **durable** `IWebhookDeliveryStore`. `InMemoryWebhookDeliveryStore` is process-local and exists only for tests, samples, and local experimentation.
 
@@ -86,6 +86,106 @@ Adapters maintained with this repository should derive their tests from `Webhook
 
 A relational implementation might use transactions and conditional `UPDATE ... WHERE lease_token = ...` statements. A Redis implementation might use Lua scripts or transactions. A file-backed implementation might use atomic replacement and cross-process locking. These are implementation choices, not core-library requirements.
 
+### Store implementation template
+
+A production adapter should map the entire port to its chosen persistence mechanism rather than delegate reliability semantics back to application code. This skeleton shows the surface that an adapter owns without prescribing an ORM, database, cache, or file format:
+
+```csharp
+public sealed class MyDurableWebhookStore : IWebhookDeliveryStore
+{
+    public Task<WebhookEnqueueResult> EnqueueAsync(
+        WebhookMessage message,
+        DateTimeOffset nextAttemptAt,
+        CancellationToken cancellationToken = default)
+    {
+        // Persist once by the case-sensitive message ID and return the existing row on duplicates.
+        throw new NotImplementedException();
+    }
+
+    public Task<IReadOnlyList<WebhookDeliveryLease>> ClaimDueAsync(
+        DateTimeOffset now,
+        TimeSpan leaseDuration,
+        int maxCount,
+        CancellationToken cancellationToken = default)
+    {
+        // Atomically select and lease at most maxCount due records.
+        throw new NotImplementedException();
+    }
+
+    public Task<WebhookDeliveryLease> RenewLeaseAsync(
+        WebhookDeliveryLease lease,
+        DateTimeOffset now,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken = default)
+    {
+        // Update only the current, unexpired token and never shorten ownership.
+        throw new NotImplementedException();
+    }
+
+    public Task MarkSucceededAsync(
+        WebhookDeliveryLease lease,
+        DateTimeOffset completedAt,
+        CancellationToken cancellationToken = default) =>
+        TransitionTerminalAsync(lease, DeliveryState.Succeeded, completedAt, null, cancellationToken);
+
+    public Task ScheduleRetryAsync(
+        WebhookDeliveryLease lease,
+        DateTimeOffset completedAt,
+        DateTimeOffset nextAttemptAt,
+        string? lastError,
+        CancellationToken cancellationToken = default)
+    {
+        // Persist Failed + nextAttemptAt and clear active ownership using the current token.
+        throw new NotImplementedException();
+    }
+
+    public Task MarkPermanentlyFailedAsync(
+        WebhookDeliveryLease lease,
+        DateTimeOffset completedAt,
+        string? lastError,
+        CancellationToken cancellationToken = default) =>
+        TransitionTerminalAsync(
+            lease,
+            DeliveryState.PermanentlyFailed,
+            completedAt,
+            lastError,
+            cancellationToken);
+
+    public Task DeadLetterAsync(
+        WebhookDeliveryLease lease,
+        DateTimeOffset completedAt,
+        string? lastError,
+        CancellationToken cancellationToken = default) =>
+        TransitionTerminalAsync(
+            lease,
+            DeliveryState.DeadLettered,
+            completedAt,
+            lastError,
+            cancellationToken);
+
+    public Task<WebhookDeliverySnapshot?> GetAsync(
+        string webhookId,
+        CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    private Task TransitionTerminalAsync(
+        WebhookDeliveryLease lease,
+        DeliveryState state,
+        DateTimeOffset completedAt,
+        string? lastError,
+        CancellationToken cancellationToken)
+    {
+        // The persistence update must match the current, unexpired lease token or throw
+        // WebhookDeliveryStoreConcurrencyException. Terminal records must never be claimable again.
+        throw new NotImplementedException();
+    }
+}
+```
+
+The `NotImplementedException` calls are placeholders only. The backing implementation must enforce the atomicity and ownership rules in the persistence layer itself, then be exercised against the conformance behavior described in [`persistence.md`](persistence.md).
+
 ## Retry and dead-letter behavior
 
 One call to `IWebhookDeliveryTransport.SendAsync` represents one HTTP attempt. The transport does not contain a retry loop.
@@ -136,6 +236,8 @@ The signed bytes are exactly:
 ```text
 UTF8(unixTimestampSeconds + ".") || rawRequestBodyBytes
 ```
+
+`X-Webhook-Id` and `X-Webhook-Event` are delivery metadata but are **not included in those canonical HMAC bytes**. If a receiver relies on either value for authorization, idempotency, or routing, put the authoritative value in the signed payload as well and compare the header with that signed value after signature verification. The runnable sample demonstrates this cross-check for the webhook ID.
 
 ### Receiver-side verification
 
@@ -188,15 +290,16 @@ The runnable sample includes timestamp parsing and replay-window validation arou
 
 ## Receiver idempotency
 
-Signature verification authenticates the request; it does not make receiver processing idempotent.
+Signature verification authenticates the timestamp and raw body bytes; it does not make receiver processing idempotent and does not authenticate metadata headers that are outside the canonical bytes.
 
 A typical receiver should:
 
-1. validate the signature and replay window;
-2. atomically check the stable webhook ID in its own idempotency store;
-3. if already completed, return the same successful response without repeating side effects;
-4. otherwise perform the business operation and persist the completed webhook ID in the same transaction whenever possible;
-5. return success only after the receiver has durably committed its own work.
+1. validate the signature and replay window against the raw body;
+2. read a stable webhook ID from the authenticated payload, or cross-check a metadata header against the signed payload before trusting it;
+3. atomically check that stable ID in its own idempotency store;
+4. if already completed, return the same successful response without repeating side effects;
+5. otherwise perform the business operation and persist the completed webhook ID in the same transaction whenever possible;
+6. return success only after the receiver has durably committed its own work.
 
 Do not rely on attempt number, timestamp, TCP connection identity, or request arrival time as an idempotency key.
 
@@ -261,7 +364,7 @@ Confirm that a store is registered. `AddReliableWebhooks` intentionally does not
 
 ### A webhook is delivered more than once
 
-This can be expected under at-least-once semantics. Verify that the receiver deduplicates by stable webhook ID. Also inspect worker crashes, attempt timeouts, lease duration, and failures while persisting success.
+This can be expected under at-least-once semantics. Verify that the receiver deduplicates by a stable ID authenticated by the signed payload. Also inspect worker crashes, attempt timeouts, lease duration, and failures while persisting success.
 
 ### Work remains `InProgress`
 
