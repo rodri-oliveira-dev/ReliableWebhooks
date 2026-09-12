@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - HTTP webhook transport for one-attempt `POST` delivery, extensible response classification, per-attempt timeout handling, bounded response-body capture, `Retry-After` metadata, and explicit network/timeout results without internal retry loops.
 - Configurable retry policy with capped exponential backoff, deterministic bounded jitter, `Retry-After` delta/date support, maximum-attempt dead-letter decisions, and replaceable retry/jitter abstractions.
 - HMAC-SHA256 webhook request signing over the exact outbound payload bytes and a Unix timestamp, with replaceable signer/secret-provider abstractions and configurable delivery header names.
+- Concurrent webhook dispatcher with bounded parallelism, atomic lease-based claims, persisted success/retry/permanent/dead-letter transitions, controllable polling, and graceful shutdown for in-flight attempts.
 - Primary GitHub Actions CI workflow with locked restore, formatting verification, Release build, tests, coverage, NuGet packaging, package validation, symbols, Source Link validation, and downloadable artifacts.
 - CodeQL security analysis for C#.
 - Dependency Review for pull requests.
