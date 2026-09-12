@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 
 namespace ReliableWebhooks;
@@ -22,6 +23,8 @@ public sealed class WebhookHttpTransport
     private readonly IWebhookHttpResponseClassifier classifier;
     private readonly TimeSpan attemptTimeout;
     private readonly int maxResponseBodyBytes;
+    private readonly IWebhookRequestSigner? signer;
+    private readonly WebhookSigningOptions signingOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WebhookHttpTransport"/> class.
@@ -31,14 +34,22 @@ public sealed class WebhookHttpTransport
     /// </param>
     /// <param name="classifier">An optional classifier that overrides the default HTTP status classification.</param>
     /// <param name="options">Optional transport settings.</param>
-    /// <exception cref="ArgumentNullException"><paramref name="httpClient"/> is <see langword="null"/>.</exception>
+    /// <param name="signer">
+    /// An optional request signer. When supplied, the transport adds webhook ID, event type, timestamp,
+    /// and signature headers to each request.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="httpClient"/> is <see langword="null"/>, or signing options contain a null time provider.
+    /// </exception>
+    /// <exception cref="ArgumentException">Configured signing header names are empty or duplicated.</exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// The configured timeout is invalid or the response-body byte limit is negative.
     /// </exception>
     public WebhookHttpTransport(
         HttpClient httpClient,
         IWebhookHttpResponseClassifier? classifier = null,
-        WebhookHttpTransportOptions? options = null)
+        WebhookHttpTransportOptions? options = null,
+        IWebhookRequestSigner? signer = null)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
 
@@ -60,10 +71,19 @@ public sealed class WebhookHttpTransport
                 "Maximum response body bytes cannot be negative.");
         }
 
+        ArgumentNullException.ThrowIfNull(options.Signing);
+
+        if (signer is not null)
+        {
+            ValidateSigningOptions(options.Signing);
+        }
+
         this.httpClient = httpClient;
         this.classifier = classifier ?? new DefaultWebhookHttpResponseClassifier();
         attemptTimeout = options.AttemptTimeout;
         maxResponseBodyBytes = options.MaxResponseBodyBytes;
+        this.signer = signer;
+        signingOptions = options.Signing;
     }
 
     /// <summary>
@@ -84,7 +104,8 @@ public sealed class WebhookHttpTransport
         ArgumentNullException.ThrowIfNull(message);
         cancellationToken.ThrowIfCancellationRequested();
 
-        using HttpRequestMessage request = CreateRequest(message);
+        byte[] payload = message.Payload.ToArray();
+        using HttpRequestMessage request = await CreateRequestAsync(message, payload, cancellationToken).ConfigureAwait(false);
         using CancellationTokenSource? timeoutSource = CreateTimeoutSource(cancellationToken);
         CancellationToken attemptToken = timeoutSource?.Token ?? cancellationToken;
 
@@ -127,30 +148,99 @@ public sealed class WebhookHttpTransport
         }
     }
 
-    private static HttpRequestMessage CreateRequest(WebhookMessage message)
+    private static void ValidateSigningOptions(WebhookSigningOptions options)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.WebhookIdHeaderName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.EventTypeHeaderName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.TimestampHeaderName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.SignatureHeaderName);
+        ArgumentNullException.ThrowIfNull(options.TimeProvider);
+
+        string[] headerNames =
+        [
+            options.WebhookIdHeaderName,
+            options.EventTypeHeaderName,
+            options.TimestampHeaderName,
+            options.SignatureHeaderName,
+        ];
+
+        if (headerNames.Distinct(StringComparer.OrdinalIgnoreCase).Count() != headerNames.Length)
+        {
+            throw new ArgumentException("Signing header names must be unique.", nameof(options));
+        }
+    }
+
+    private async ValueTask<HttpRequestMessage> CreateRequestAsync(
+        WebhookMessage message,
+        byte[] payload,
+        CancellationToken cancellationToken)
     {
         HttpRequestMessage request = new(HttpMethod.Post, message.Destination);
-        ByteArrayContent content = new(message.Payload.ToArray());
 
-        _ = content.Headers.TryAddWithoutValidation("Content-Type", message.ContentType);
-        request.Content = content;
-
-        foreach ((string name, string value) in message.Headers)
+        try
         {
-            if (string.Equals(name, "Content-Type", StringComparison.OrdinalIgnoreCase))
+            ByteArrayContent content = new(payload);
+            _ = content.Headers.TryAddWithoutValidation("Content-Type", message.ContentType);
+            request.Content = content;
+
+            foreach ((string name, string value) in message.Headers)
             {
-                continue;
+                if (string.Equals(name, "Content-Type", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!request.Headers.TryAddWithoutValidation(name, value)
+                    && !content.Headers.TryAddWithoutValidation(name, value))
+                {
+                    throw new InvalidOperationException($"The custom header '{name}' could not be applied to the HTTP request.");
+                }
             }
 
-            if (!request.Headers.TryAddWithoutValidation(name, value)
-                && !content.Headers.TryAddWithoutValidation(name, value))
+            if (signer is not null)
             {
-                request.Dispose();
-                throw new InvalidOperationException($"The custom header '{name}' could not be applied to the HTTP request.");
+                DateTimeOffset timestamp = signingOptions.TimeProvider.GetUtcNow().ToUniversalTime();
+                string signature = await signer
+                    .SignAsync(message, payload, timestamp, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(signature))
+                {
+                    throw new InvalidOperationException("The configured webhook signer returned an empty signature.");
+                }
+
+                string timestampValue = timestamp
+                    .ToUnixTimeSeconds()
+                    .ToString(CultureInfo.InvariantCulture);
+
+                ApplyGeneratedHeader(request, content, signingOptions.WebhookIdHeaderName, message.Id);
+                ApplyGeneratedHeader(request, content, signingOptions.EventTypeHeaderName, message.EventType);
+                ApplyGeneratedHeader(request, content, signingOptions.TimestampHeaderName, timestampValue);
+                ApplyGeneratedHeader(request, content, signingOptions.SignatureHeaderName, signature);
             }
+
+            return request;
         }
+        catch
+        {
+            request.Dispose();
+            throw;
+        }
+    }
 
-        return request;
+    private static void ApplyGeneratedHeader(
+        HttpRequestMessage request,
+        HttpContent content,
+        string name,
+        string value)
+    {
+        _ = request.Headers.Remove(name);
+        _ = content.Headers.Remove(name);
+
+        if (!request.Headers.TryAddWithoutValidation(name, value))
+        {
+            throw new InvalidOperationException($"The generated webhook header '{name}' could not be applied to the HTTP request.");
+        }
     }
 
     private static (TimeSpan? Delay, DateTimeOffset? Date) ReadRetryAfter(HttpResponseHeaders headers)
