@@ -45,11 +45,12 @@ jobs:
           bash -n scripts/resolve-nuget-publishing.sh
           bash -n scripts/verify-package-consumer.sh
 
-      - name: Remove preparation files and commit
+      - name: Commit prepared non-workflow changes
         run: |
-          git rm scripts/prepare-issue13.py .github/workflows/temp-issue-13-run.yml
+          git checkout -- .github/workflows/ci.yml .github/workflows/release.yml
+          git rm scripts/prepare-issue13.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "feat: harden v0.1.0 release and publication"
+          git commit -m "feat: harden v0.1.0 package and release contract"
           git push
