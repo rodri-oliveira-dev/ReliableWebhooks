@@ -198,7 +198,7 @@ The default classifier treats:
 - `408`, `425`, `429`, and `5xx` as retryable;
 - other HTTP statuses, including redirects, as permanent failures.
 
-The default retry policy calculates a future `NextAttemptAt` using capped exponential backoff plus positive jitter. A valid `Retry-After` can delay the next attempt further, subject to `MaxDelay`. When `MaxAttempts` is reached, a retryable failure becomes `DeadLettered`.
+The default retry policy calculates a future `NextAttemptAt` using capped exponential backoff plus positive jitter. `MaxDelay` caps only the locally generated backoff/jitter delay. A valid positive `Retry-After` delta or future HTTP-date can delay the next attempt beyond `MaxDelay` and is not shortened by the default policy. When `MaxAttempts` is reached, a retryable failure becomes `DeadLettered`.
 
 Permanent failures transition directly to `PermanentlyFailed` and are not retried automatically.
 

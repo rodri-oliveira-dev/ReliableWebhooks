@@ -275,7 +275,7 @@ builder.Services
 | Delay base de retry | 1 segundo |
 | Delay máximo de retry | 5 minutos |
 | Jitter | 0 a 20% de jitter positivo antes do limite máximo |
-| `Retry-After` | Respeitado quando agenda depois do delay local, limitado pelo delay máximo configurado |
+| `Retry-After` | Respeitado quando agenda depois do delay local; `MaxDelay` limita apenas backoff/jitter locais |
 
 Redirects automáticos precisam ficar desabilitados para que uma chamada do transporte não se transforme silenciosamente em múltiplas requisições ou altere o método HTTP. O cliente gerenciado pela integração de DI já aplica essa configuração.
 

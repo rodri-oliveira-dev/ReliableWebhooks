@@ -101,7 +101,7 @@ public sealed class DefaultWebhookRetryPolicyTests
     }
 
     [Fact]
-    public void MaximumDelayAlsoCapsRetryAfter()
+    public void RetryAfterDeltaLongerThanMaximumDelayIsAuthoritative()
     {
         DefaultWebhookRetryPolicy policy = CreatePolicy(
             maxDelay: TimeSpan.FromSeconds(30),
@@ -113,7 +113,52 @@ public sealed class DefaultWebhookRetryPolicyTests
 
         WebhookRetryDecision decision = policy.GetDecision(context);
 
-        Assert.Equal(Now.AddSeconds(30), decision.NextAttemptAt);
+        Assert.Equal(Now.AddHours(1), decision.NextAttemptAt);
+    }
+
+    [Fact]
+    public void RetryAfterDateLongerThanMaximumDelayIsAuthoritative()
+    {
+        DefaultWebhookRetryPolicy policy = CreatePolicy(
+            maxDelay: TimeSpan.FromSeconds(30),
+            jitterFactor: 0);
+        WebhookRetryContext context = new(
+            CreateDelivery(attemptCount: 1),
+            Now,
+            retryAfterDate: Now.AddHours(2));
+
+        WebhookRetryDecision decision = policy.GetDecision(context);
+
+        Assert.Equal(Now.AddHours(2), decision.NextAttemptAt);
+    }
+
+    [Fact]
+    public void LocalDelayStillWinsWhenRetryAfterIsEarlier()
+    {
+        DefaultWebhookRetryPolicy policy = CreatePolicy(jitterFactor: 0);
+        WebhookRetryContext context = new(
+            CreateDelivery(attemptCount: 3),
+            Now,
+            retryAfterDelay: TimeSpan.FromSeconds(1),
+            retryAfterDate: Now.AddSeconds(3));
+
+        WebhookRetryDecision decision = policy.GetDecision(context);
+
+        Assert.Equal(Now.AddSeconds(8), decision.NextAttemptAt);
+    }
+
+    [Fact]
+    public void ExtremeRetryAfterDelaySaturatesAtMaximumRepresentableTime()
+    {
+        DefaultWebhookRetryPolicy policy = CreatePolicy(jitterFactor: 0);
+        WebhookRetryContext context = new(
+            CreateDelivery(attemptCount: 1),
+            DateTimeOffset.MaxValue.AddTicks(-1),
+            retryAfterDelay: TimeSpan.FromDays(1));
+
+        WebhookRetryDecision decision = policy.GetDecision(context);
+
+        Assert.Equal(DateTimeOffset.MaxValue, decision.NextAttemptAt);
     }
 
     [Fact]

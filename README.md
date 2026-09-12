@@ -312,7 +312,7 @@ The application can then add OTLP, Azure Monitor, Prometheus, Grafana/Tempo, Dat
 | Base retry delay | 1 second |
 | Maximum retry delay | 5 minutes |
 | Jitter | 0 to 20% positive jitter before the maximum-delay cap |
-| `Retry-After` | Honored when it schedules later than the local retry delay, capped by the configured maximum delay |
+| `Retry-After` | Honored when it schedules later than the local retry delay; `MaxDelay` caps only local backoff/jitter |
 
 Automatic redirects must be disabled on the `HttpClient` handler so a single transport invocation cannot silently become multiple HTTP requests or change the request method. The default DI-managed client configures this automatically.
 
