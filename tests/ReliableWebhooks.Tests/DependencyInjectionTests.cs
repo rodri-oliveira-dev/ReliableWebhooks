@@ -338,6 +338,73 @@ public sealed class DependencyInjectionTests
     }
 
     [Fact]
+    public async Task HostedDispatcherContinuesAfterDeliveryScopedTransportException()
+    {
+        ServiceCollection services = new();
+        InMemoryWebhookDeliveryStore store = new();
+        BlockingDispatcherDelay delay = new();
+        DeliveryScopedFaultingTransport transport = new("hosted-poison");
+
+        await store.EnqueueAsync(
+            CreateMessage("hosted-poison"),
+            DateTimeOffset.UtcNow,
+            TestContext.Current.CancellationToken);
+        await store.EnqueueAsync(
+            CreateMessage("hosted-healthy"),
+            DateTimeOffset.UtcNow,
+            TestContext.Current.CancellationToken);
+
+        services.AddSingleton<IWebhookDeliveryStore>(store);
+        services.AddSingleton<IWebhookDeliveryTransport>(transport);
+        services.AddSingleton<IWebhookDispatcherDelay>(delay);
+
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks(options =>
+        {
+            options.Dispatcher.MaxConcurrency = 2;
+            options.Dispatcher.PollInterval = TimeSpan.FromMinutes(1);
+            options.Dispatcher.ShutdownGracePeriod = TimeSpan.FromSeconds(1);
+            options.Retry = new WebhookRetryPolicyOptions
+            {
+                MaxAttempts = 1,
+                BaseDelay = TimeSpan.FromSeconds(1),
+                MaxDelay = TimeSpan.FromSeconds(1),
+                JitterFactor = 0,
+            };
+        });
+        _ = builder.AddHostedDispatcher();
+
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        IHostedService hostedService = Assert.Single(provider.GetServices<IHostedService>());
+
+        await hostedService.StartAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () =>
+        {
+            WebhookDeliverySnapshot? poison = await store.GetAsync(
+                "hosted-poison",
+                TestContext.Current.CancellationToken);
+            WebhookDeliverySnapshot? healthy = await store.GetAsync(
+                "hosted-healthy",
+                TestContext.Current.CancellationToken);
+
+            return poison?.State == DeliveryState.DeadLettered
+                && healthy?.State == DeliveryState.Succeeded;
+        });
+        await hostedService.StopAsync(TestContext.Current.CancellationToken);
+
+        WebhookDeliverySnapshot? poisonSnapshot = await store.GetAsync(
+            "hosted-poison",
+            TestContext.Current.CancellationToken);
+        WebhookDeliverySnapshot? healthySnapshot = await store.GetAsync(
+            "hosted-healthy",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(poisonSnapshot);
+        Assert.Equal(DeliveryState.DeadLettered, poisonSnapshot.State);
+        Assert.NotNull(healthySnapshot);
+        Assert.Equal(DeliveryState.Succeeded, healthySnapshot.State);
+    }
+
+    [Fact]
     public void InvalidOptionsFailWithActionableValidationMessage()
     {
         ServiceCollection services = new();
@@ -378,6 +445,21 @@ public sealed class DependencyInjectionTests
             "application/json");
     }
 
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(10), TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail("The expected condition was not met.");
+    }
+
     private sealed class BlockingDispatcherDelay : IWebhookDispatcherDelay
     {
         private readonly TaskCompletionSource entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -390,6 +472,35 @@ public sealed class DependencyInjectionTests
         {
             _ = entered.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class DeliveryScopedFaultingTransport : IWebhookDeliveryTransport
+    {
+        private readonly string faultingId;
+        private readonly WebhookHttpTransport innerTransport = new(
+            new HttpClient(new SuccessHandler(), disposeHandler: true)
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+            });
+
+        public DeliveryScopedFaultingTransport(string faultingId)
+        {
+            this.faultingId = faultingId;
+        }
+
+        public Task<WebhookDeliveryResult> SendAsync(
+            WebhookMessage message,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (string.Equals(message.Id, faultingId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("transport failure");
+            }
+
+            return innerTransport.SendAsync(message, cancellationToken);
         }
     }
 

@@ -336,6 +336,7 @@ ReliableWebhooks is designed around explicit delivery semantics:
 - **Dispatcher concurrency is bounded.** Claims are limited to currently available slots instead of creating unbounded background tasks.
 - **Shutdown is two-phase.** New claims stop first; in-flight work can finish within the grace period before remaining attempts are canceled.
 - **One transport call means one HTTP attempt.** Retry loops are intentionally outside the transport.
+- **Delivery-scoped extension failures are isolated.** Exceptions from transport/signing/classification for one delivery are logged by exception type and move through retry/dead-letter handling; store claim and state-transition failures remain infrastructure failures.
 - **Signed payloads use exact request bytes.** Receivers must verify the raw body rather than a parsed/reserialized representation.
 - **Retry policies schedule; they do not wait.** `DefaultWebhookRetryPolicy` returns a future timestamp or dead-letter decision and never calls `Task.Delay`.
 - **Telemetry is backend-neutral.** Logs, traces, and metrics use standard .NET APIs; exporters remain an application concern.

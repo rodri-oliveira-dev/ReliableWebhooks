@@ -297,6 +297,7 @@ ReliableWebhooks trabalha com semântica explícita de entrega:
 - **A concorrência do dispatcher é limitada.** Claims respeitam os slots disponíveis e não criam tasks ilimitadas.
 - **O shutdown ocorre em duas fases.** Novos claims param primeiro; trabalho em andamento pode terminar durante o grace period antes de ser cancelado.
 - **Uma chamada ao transporte corresponde a uma tentativa HTTP.** Loops de retry ficam fora do transporte.
+- **Falhas de extensões por entrega são isoladas.** Exceções de transporte/assinatura/classificação de uma entrega são registradas pelo tipo da exceção e seguem retry/dead letter; falhas de claim e transição no store continuam sendo falhas de infraestrutura.
 - **Payloads assinados usam os bytes exatos da requisição.** O receptor deve validar o corpo bruto, não uma versão parseada e serializada novamente.
 - **Políticas de retry agendam; elas não aguardam.** `DefaultWebhookRetryPolicy` retorna um timestamp futuro ou decisão de dead letter.
 - **A telemetria é independente de backend.** Exporters continuam sob responsabilidade da aplicação.

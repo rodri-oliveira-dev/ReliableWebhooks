@@ -11,7 +11,10 @@ namespace ReliableWebhooks;
 /// </summary>
 /// <remarks>
 /// The dispatcher is hosting-framework agnostic. Dependency-injection and hosted-service integration can wrap
-/// this type without changing its delivery semantics.
+/// this type without changing its delivery semantics. Exceptions from delivery-scoped extension points such as
+/// transports, signers, secret providers, and response classifiers are isolated to the active delivery and are
+/// persisted through the retry/dead-letter policy. Store claim and state-transition failures remain
+/// infrastructure failures because the dispatcher cannot safely prove ownership or progress without persistence.
 /// </remarks>
 public sealed class WebhookDispatcher
 {
@@ -229,9 +232,33 @@ public sealed class WebhookDispatcher
 
         try
         {
-            WebhookDeliveryResult result = await transport.SendAsync(
-                message,
-                ownershipCancellation.Token).ConfigureAwait(false);
+            WebhookDeliveryResult result;
+
+            try
+            {
+                result = await transport.SendAsync(
+                    message,
+                    ownershipCancellation.Token).ConfigureAwait(false);
+
+                if (!Enum.IsDefined(result.Outcome))
+                {
+                    throw new InvalidOperationException(
+                        "The webhook transport returned an undefined delivery outcome.");
+                }
+            }
+            catch (Exception exception) when (
+                IsDeliveryScopedException(exception, cancellationToken, ownershipCancellation.Token))
+            {
+                DateTimeOffset failedAt = timeProvider.GetUtcNow();
+                WebhookDeliveryLease failedLease = activeLease.Get();
+                outcome = await PersistDeliveryScopedExceptionAsync(
+                    failedLease,
+                    exception,
+                    failedAt,
+                    activity,
+                    cancellationToken).ConfigureAwait(false);
+                return;
+            }
 
             cancellationToken.ThrowIfCancellationRequested();
             ownershipCancellation.Token.ThrowIfCancellationRequested();
@@ -276,9 +303,6 @@ public sealed class WebhookDispatcher
                         cancellationToken).ConfigureAwait(false);
                     activity?.SetStatus(ActivityStatusCode.Error, outcome);
                     break;
-
-                default:
-                    throw new InvalidOperationException("The webhook transport returned an undefined delivery outcome.");
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -386,11 +410,12 @@ public sealed class WebhookDispatcher
         WebhookDeliveryLease lease,
         WebhookDeliveryResult result,
         DateTimeOffset completedAt,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? lastErrorOverride = null)
     {
         WebhookRetryDecision decision = retryPolicy.GetDecision(
             WebhookRetryContext.FromResult(lease.Delivery, result, completedAt));
-        string? lastError = DescribeFailure(result);
+        string? lastError = lastErrorOverride ?? DescribeFailure(result);
         WebhookMessage message = lease.Delivery.Message;
         int attempt = lease.Delivery.AttemptCount;
 
@@ -421,6 +446,47 @@ public sealed class WebhookDispatcher
         ReliableWebhooksInstrumentation.DeadLettered.Add(1, CreateEventTypeTags(message.EventType));
         ReliableWebhooksLog.DeadLettered(logger, message.Id, message.EventType, attempt);
         return DeadLetterOutcome;
+    }
+
+    private async Task<string> PersistDeliveryScopedExceptionAsync(
+        WebhookDeliveryLease lease,
+        Exception exception,
+        DateTimeOffset completedAt,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
+        WebhookMessage message = lease.Delivery.Message;
+        int attempt = lease.Delivery.AttemptCount;
+        string exceptionType = exception.GetType().FullName ?? exception.GetType().Name;
+        string lastError = $"Delivery exception: {exceptionType}";
+
+        activity?.SetTag(ReliableWebhooksInstrumentation.ErrorTypeTagName, exceptionType);
+        ReliableWebhooksLog.AttemptFailedUnexpectedly(
+            logger,
+            message.Id,
+            message.EventType,
+            attempt,
+            exceptionType);
+
+        string outcome = await PersistRetryableFailureAsync(
+            lease,
+            WebhookDeliveryResult.NetworkFailure(),
+            completedAt,
+            cancellationToken,
+            lastError).ConfigureAwait(false);
+        activity?.SetStatus(ActivityStatusCode.Error, outcome);
+        return outcome;
+    }
+
+    private static bool IsDeliveryScopedException(
+        Exception exception,
+        CancellationToken dispatcherCancellation,
+        CancellationToken ownershipCancellation)
+    {
+        return exception is not OperationCanceledException
+            && exception is not WebhookDeliveryStoreConcurrencyException
+            && !dispatcherCancellation.IsCancellationRequested
+            && !ownershipCancellation.IsCancellationRequested;
     }
 
     private async Task<Exception?> DrainAsync(

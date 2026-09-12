@@ -390,6 +390,8 @@ Start with the defaults, then tune from observed latency and backlog rather than
 - Configure retry delays to avoid synchronized retry storms across many workers.
 - Treat dead-lettered deliveries as operational work that needs monitoring and an explicit replay/remediation process.
 
+Delivery-scoped extension failures are isolated to the active delivery. Exceptions from the configured transport, signer, signing secret provider, or response classification path are logged by exception type, recorded on the attempt trace, and persisted through the retry/dead-letter policy so one poison delivery does not stop unrelated work. Claim failures, lease-renewal persistence failures, and store state-transition failures remain infrastructure failures because the dispatcher cannot safely prove ownership or progress without a working store; alert on those as worker/store health incidents.
+
 ## Troubleshooting
 
 ### The host fails at startup
