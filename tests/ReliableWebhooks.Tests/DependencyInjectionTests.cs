@@ -75,7 +75,7 @@ public sealed class DependencyInjectionTests
         Assert.Equal(WebhookEnqueueStatus.Enqueued, enqueueResult.Status);
 
         await hostedService.StartAsync(TestContext.Current.CancellationToken);
-        _ = await delay.Entered.WaitAsync(TestContext.Current.CancellationToken);
+        await delay.Entered.WaitAsync(TestContext.Current.CancellationToken);
         await hostedService.StopAsync(TestContext.Current.CancellationToken);
 
         WebhookDeliverySnapshot? snapshot = await store.GetAsync(
