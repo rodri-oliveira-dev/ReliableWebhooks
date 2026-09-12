@@ -1,4 +1,5 @@
 #:property RestorePackagesWithLockFile=false
+#:property EnableTrimAnalyzer=false
 
 using System.Globalization;
 using System.Reflection;
@@ -531,25 +532,52 @@ static string FormatTypeKind(Type type)
     return "class";
 }
 
-sealed class SnapshotLoadContext : AssemblyLoadContext
+internal sealed class SnapshotLoadContext : AssemblyLoadContext
 {
     private readonly string assemblyDirectory;
+    private readonly string nugetPackagesDirectory;
 
     public SnapshotLoadContext(string assemblyPath)
         : base(isCollectible: true)
     {
         assemblyDirectory = Path.GetDirectoryName(assemblyPath)
-            ?? throw new ArgumentException("Assembly path must have a directory.", nameof(assemblyPath));
+  ?? throw new ArgumentException("Assembly path must have a directory.", nameof(assemblyPath));
+        nugetPackagesDirectory = Environment.GetEnvironmentVariable("NUGET_PACKAGES")
+  ?? Path.Combine(
+      Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+      ".nuget",
+      "packages");
     }
 
     protected override Assembly? Load(AssemblyName assemblyName)
     {
         if (string.IsNullOrWhiteSpace(assemblyName.Name))
         {
-            return null;
+  return null;
         }
 
-        string candidate = Path.Combine(assemblyDirectory, $"{assemblyName.Name}.dll");
-        return File.Exists(candidate) ? LoadFromAssemblyPath(candidate) : null;
+        string localCandidate = Path.Combine(assemblyDirectory, $"{assemblyName.Name}.dll");
+        if (File.Exists(localCandidate))
+        {
+  return LoadFromAssemblyPath(localCandidate);
+        }
+
+        string packageRoot = Path.Combine(
+  nugetPackagesDirectory,
+  assemblyName.Name.ToLowerInvariant());
+        if (!Directory.Exists(packageRoot))
+        {
+  return null;
+        }
+
+        string librarySegment = $"{Path.DirectorySeparatorChar}lib{Path.DirectorySeparatorChar}";
+        string? packageCandidate = Directory
+  .EnumerateFiles(packageRoot, $"{assemblyName.Name}.dll", SearchOption.AllDirectories)
+  .OrderByDescending(
+      candidate => candidate.Contains(librarySegment, StringComparison.Ordinal))
+  .ThenByDescending(static candidate => candidate, StringComparer.Ordinal)
+  .FirstOrDefault();
+
+        return packageCandidate is null ? null : LoadFromAssemblyPath(packageCandidate);
     }
 }
