@@ -4,23 +4,25 @@ This document records the release contract for the first public ReliableWebhooks
 
 ## Distribution
 
-The official release workflow validates one immutable `.nupkg` and publishes that same artifact to:
+The official release workflow validates one immutable `.nupkg` and uses that validated artifact for the configured distribution targets:
 
-- NuGet.org using GitHub OIDC and NuGet Trusted Publishing;
 - GitHub Packages using the scoped `GITHUB_TOKEN`;
-- GitHub Releases as an attached artifact together with symbols, manifest, and checksums.
+- GitHub Releases as an attached artifact together with symbols, manifest, and checksums;
+- optionally, NuGet.org using GitHub OIDC and NuGet Trusted Publishing when `NUGET_USER` is configured.
 
 No long-lived NuGet API key is stored by the repository.
 
 ## External release prerequisites
 
-Before running an official publication from `main`:
+GitHub Packages, the release tag, and the GitHub Release do not require `NUGET_USER`.
+
+To include NuGet.org in the v0.1.0 publication and satisfy the NuGet.org distribution target from issue #13:
 
 1. configure a NuGet.org Trusted Publishing policy that authorizes this repository, `.github/workflows/release.yml`, and the `release` GitHub environment;
 2. configure the repository variable `NUGET_USER` with the NuGet.org profile authorized by that policy;
 3. keep the GitHub `release` environment approvals or protection rules configured as required by the repository owner.
 
-The workflow deliberately fails an official `publish=true` request when `NUGET_USER` is absent. A dry run remains credential-free.
+`NUGET_USER` is an optional NuGet-only opt-in. When it is absent, the workflow skips NuGet authentication/publication while preserving the tag, GitHub Packages publication, and GitHub Release. A dry run remains credential-free.
 
 ## Release procedure
 
@@ -29,9 +31,9 @@ From GitHub Actions, run the `Release` workflow on `main` with:
 - `version`: `0.1.0`;
 - `publish`: `true`.
 
-The workflow validates SemVer, the exact `main` SHA, restore/build/tests, the v0.1.0 public API snapshot, package metadata, Source Link, symbols, a clean custom-store consumer, manifest, checksums, and artifact attestation. It then publishes NuGet.org and GitHub Packages before creating and publishing tag `v0.1.0` and the GitHub Release.
+The workflow validates SemVer, the exact `main` SHA, restore/build/tests, the v0.1.0 public API signature snapshot, package metadata, Source Link, symbols, a clean custom-store consumer, manifest, checksums, and artifact attestation. It then creates or revalidates tag `v0.1.0` at the exact validated SHA before any registry publication. NuGet.org is published only when `NUGET_USER` enables Trusted Publishing; GitHub Packages is always published for an official release. The GitHub Release is created and published only after the enabled registry publications succeed.
 
-Re-running the same version is recoverable only when any existing tag resolves to the same validated SHA. Registry pushes use duplicate-safe behavior; a tag pointing to another SHA is rejected.
+Re-running the same version is recoverable only when the existing tag resolves to the same validated SHA. Registry pushes use duplicate-safe behavior; a tag pointing to another SHA is rejected before external publication. This prevents a retry from associating an already-published package version with a newer commit.
 
 ## v0.1.0 guarantees
 
