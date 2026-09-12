@@ -1,4 +1,8 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Runtime.ExceptionServices;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ReliableWebhooks;
 
@@ -11,10 +15,19 @@ namespace ReliableWebhooks;
 /// </remarks>
 public sealed class WebhookDispatcher
 {
+    private const string SuccessOutcome = "success";
+    private const string RetryOutcome = "retry_scheduled";
+    private const string PermanentFailureOutcome = "permanent_failure";
+    private const string DeadLetterOutcome = "dead_letter";
+    private const string CanceledOutcome = "canceled";
+    private const string LeaseLostOutcome = "lease_lost";
+    private const string UnexpectedFailureOutcome = "unexpected_failure";
+
     private readonly IWebhookDeliveryStore store;
     private readonly IWebhookDeliveryTransport transport;
     private readonly IWebhookRetryPolicy retryPolicy;
     private readonly IWebhookDispatcherDelay delay;
+    private readonly ILogger logger;
     private readonly int maxConcurrency;
     private readonly TimeSpan leaseDuration;
     private readonly TimeSpan pollInterval;
@@ -22,25 +35,46 @@ public sealed class WebhookDispatcher
     private readonly TimeProvider timeProvider;
 
     /// <summary>
-    /// Initializes a new webhook dispatcher.
+    /// Initializes a new webhook dispatcher without structured logging.
     /// </summary>
     /// <param name="store">The delivery store used for claims and state transitions.</param>
     /// <param name="transport">The transport used for exactly one delivery attempt per claimed lease.</param>
     /// <param name="retryPolicy">The retry policy used for retryable failures.</param>
     /// <param name="options">Optional dispatcher configuration.</param>
     /// <param name="delay">Optional polling delay implementation.</param>
-    /// <exception cref="ArgumentNullException">A required dependency or time provider is null.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">A dispatcher option is outside its supported range.</exception>
     public WebhookDispatcher(
         IWebhookDeliveryStore store,
         IWebhookDeliveryTransport transport,
         IWebhookRetryPolicy retryPolicy,
         WebhookDispatcherOptions? options = null,
         IWebhookDispatcherDelay? delay = null)
+        : this(store, transport, retryPolicy, options, delay, NullLogger.Instance)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new webhook dispatcher with structured lifecycle logging.
+    /// </summary>
+    /// <param name="store">The delivery store used for claims and state transitions.</param>
+    /// <param name="transport">The transport used for exactly one delivery attempt per claimed lease.</param>
+    /// <param name="retryPolicy">The retry policy used for retryable failures.</param>
+    /// <param name="options">Optional dispatcher configuration.</param>
+    /// <param name="delay">Optional polling delay implementation.</param>
+    /// <param name="logger">The logger that receives safe structured lifecycle events.</param>
+    /// <exception cref="ArgumentNullException">A required dependency, logger, or time provider is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A dispatcher option is outside its supported range.</exception>
+    public WebhookDispatcher(
+        IWebhookDeliveryStore store,
+        IWebhookDeliveryTransport transport,
+        IWebhookRetryPolicy retryPolicy,
+        WebhookDispatcherOptions? options,
+        IWebhookDispatcherDelay? delay,
+        ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(transport);
         ArgumentNullException.ThrowIfNull(retryPolicy);
+        ArgumentNullException.ThrowIfNull(logger);
 
         options ??= new WebhookDispatcherOptions();
         ValidateOptions(options);
@@ -48,6 +82,7 @@ public sealed class WebhookDispatcher
         this.store = store;
         this.transport = transport;
         this.retryPolicy = retryPolicy;
+        this.logger = logger;
         maxConcurrency = options.MaxConcurrency;
         leaseDuration = options.LeaseDuration;
         pollInterval = options.PollInterval;
@@ -94,6 +129,11 @@ public sealed class WebhookDispatcher
 
                 foreach (WebhookDeliveryLease lease in leases)
                 {
+                    ReliableWebhooksLog.Claimed(
+                        logger,
+                        lease.Delivery.Message.Id,
+                        lease.Delivery.Message.EventType,
+                        lease.Delivery.AttemptCount);
                     inFlight.Add(ProcessLeaseAsync(lease, attemptCancellation.Token));
                 }
 
@@ -164,14 +204,36 @@ public sealed class WebhookDispatcher
         WebhookDeliveryLease lease,
         CancellationToken cancellationToken)
     {
+        WebhookMessage message = lease.Delivery.Message;
+        int attempt = lease.Delivery.AttemptCount;
+        string outcome = UnexpectedFailureOutcome;
+        long startedAt = Stopwatch.GetTimestamp();
+
+        using Activity? activity = ReliableWebhooksInstrumentation.ActivitySource.StartActivity(
+            ReliableWebhooksInstrumentation.DeliveryAttemptActivityName,
+            ActivityKind.Producer);
+        activity?.SetTag(ReliableWebhooksInstrumentation.WebhookIdTagName, message.Id);
+        activity?.SetTag(ReliableWebhooksInstrumentation.EventTypeTagName, message.EventType);
+        activity?.SetTag(ReliableWebhooksInstrumentation.AttemptTagName, attempt);
+
+        ReliableWebhooksInstrumentation.Attempted.Add(
+            1,
+            CreateEventTypeTags(message.EventType));
+        ReliableWebhooksLog.AttemptStarted(logger, message.Id, message.EventType, attempt);
+
         try
         {
             WebhookDeliveryResult result = await transport.SendAsync(
-                lease.Delivery.Message,
+                message,
                 cancellationToken).ConfigureAwait(false);
 
             cancellationToken.ThrowIfCancellationRequested();
             DateTimeOffset completedAt = timeProvider.GetUtcNow();
+
+            if (result.StatusCode is int statusCode)
+            {
+                activity?.SetTag(ReliableWebhooksInstrumentation.HttpStatusCodeTagName, statusCode);
+            }
 
             switch (result.Outcome)
             {
@@ -180,6 +242,10 @@ public sealed class WebhookDispatcher
                         lease,
                         completedAt,
                         cancellationToken).ConfigureAwait(false);
+                    outcome = SuccessOutcome;
+                    ReliableWebhooksInstrumentation.Succeeded.Add(1, CreateEventTypeTags(message.EventType));
+                    ReliableWebhooksLog.AttemptSucceeded(logger, message.Id, message.EventType, attempt);
+                    activity?.SetStatus(ActivityStatusCode.Ok);
                     break;
 
                 case WebhookDeliveryOutcome.PermanentFailure:
@@ -188,14 +254,19 @@ public sealed class WebhookDispatcher
                         completedAt,
                         DescribeFailure(result),
                         cancellationToken).ConfigureAwait(false);
+                    outcome = PermanentFailureOutcome;
+                    ReliableWebhooksInstrumentation.PermanentlyFailed.Add(1, CreateEventTypeTags(message.EventType));
+                    ReliableWebhooksLog.PermanentlyFailed(logger, message.Id, message.EventType, attempt);
+                    activity?.SetStatus(ActivityStatusCode.Error, PermanentFailureOutcome);
                     break;
 
                 case WebhookDeliveryOutcome.RetryableFailure:
-                    await PersistRetryableFailureAsync(
+                    outcome = await PersistRetryableFailureAsync(
                         lease,
                         result,
                         completedAt,
                         cancellationToken).ConfigureAwait(false);
+                    activity?.SetStatus(ActivityStatusCode.Error, outcome);
                     break;
 
                 default:
@@ -204,15 +275,42 @@ public sealed class WebhookDispatcher
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            outcome = CanceledOutcome;
+            ReliableWebhooksLog.AttemptCanceled(logger, message.Id, message.EventType, attempt);
             // Cancellation intentionally leaves the lease in progress so it can expire and be reclaimed safely.
         }
         catch (WebhookDeliveryStoreConcurrencyException)
         {
+            outcome = LeaseLostOutcome;
+            ReliableWebhooksLog.LeaseOwnershipLost(logger, message.Id, message.EventType, attempt);
             // Lease ownership was lost or expired. A stale worker must not overwrite the current owner.
+        }
+        catch (Exception exception)
+        {
+            outcome = UnexpectedFailureOutcome;
+            string exceptionType = exception.GetType().FullName ?? exception.GetType().Name;
+            activity?.SetTag(ReliableWebhooksInstrumentation.ErrorTypeTagName, exceptionType);
+            activity?.SetStatus(ActivityStatusCode.Error, UnexpectedFailureOutcome);
+            ReliableWebhooksLog.AttemptFailedUnexpectedly(
+                logger,
+                message.Id,
+                message.EventType,
+                attempt,
+                exceptionType);
+            throw;
+        }
+        finally
+        {
+            activity?.SetTag(ReliableWebhooksInstrumentation.OutcomeTagName, outcome);
+            TagList durationTags = CreateEventTypeTags(message.EventType);
+            durationTags.Add(ReliableWebhooksInstrumentation.OutcomeTagName, outcome);
+            ReliableWebhooksInstrumentation.DeliveryDuration.Record(
+                Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds,
+                durationTags);
         }
     }
 
-    private async Task PersistRetryableFailureAsync(
+    private async Task<string> PersistRetryableFailureAsync(
         WebhookDeliveryLease lease,
         WebhookDeliveryResult result,
         DateTimeOffset completedAt,
@@ -221,16 +319,26 @@ public sealed class WebhookDispatcher
         WebhookRetryDecision decision = retryPolicy.GetDecision(
             WebhookRetryContext.FromResult(lease.Delivery, result, completedAt));
         string? lastError = DescribeFailure(result);
+        WebhookMessage message = lease.Delivery.Message;
+        int attempt = lease.Delivery.AttemptCount;
 
         if (decision.ShouldRetry)
         {
+            DateTimeOffset nextAttemptAt = decision.NextAttemptAt!.Value;
             await store.ScheduleRetryAsync(
                 lease,
                 completedAt,
-                decision.NextAttemptAt!.Value,
+                nextAttemptAt,
                 lastError,
                 cancellationToken).ConfigureAwait(false);
-            return;
+            ReliableWebhooksInstrumentation.Retried.Add(1, CreateEventTypeTags(message.EventType));
+            ReliableWebhooksLog.RetryScheduled(
+                logger,
+                message.Id,
+                message.EventType,
+                attempt,
+                nextAttemptAt);
+            return RetryOutcome;
         }
 
         await store.DeadLetterAsync(
@@ -238,6 +346,9 @@ public sealed class WebhookDispatcher
             completedAt,
             lastError,
             cancellationToken).ConfigureAwait(false);
+        ReliableWebhooksInstrumentation.DeadLettered.Add(1, CreateEventTypeTags(message.EventType));
+        ReliableWebhooksLog.DeadLettered(logger, message.Id, message.EventType, attempt);
+        return DeadLetterOutcome;
     }
 
     private async Task<Exception?> DrainAsync(
@@ -320,6 +431,13 @@ public sealed class WebhookDispatcher
         return task.IsCanceled
             ? new TaskCanceledException(task)
             : null;
+    }
+
+    private static TagList CreateEventTypeTags(string eventType)
+    {
+        TagList tags = default;
+        tags.Add(ReliableWebhooksInstrumentation.EventTypeTagName, eventType);
+        return tags;
     }
 
     private static string? DescribeFailure(WebhookDeliveryResult result)
