@@ -35,6 +35,12 @@ The workflow validates SemVer, the exact `main` SHA, restore/build/tests, the v0
 
 Re-running the same version is recoverable only when the existing tag resolves to the same validated SHA. Registry pushes use duplicate-safe behavior; a tag pointing to another SHA is rejected before external publication. This prevents a retry from associating an already-published package version with a newer commit.
 
+## Public API snapshot
+
+`src/ReliableWebhooks/PublicApi.v0.1.0.txt` records externally visible types and members, including member accessibility, modifiers, generic constraints, constants, parameter defaults, custom modifiers, and C# nullable reference annotations for returns, parameters, properties, fields, arrays, and nested generic arguments.
+
+The snapshot is a source-compatibility gate for the v0.1.0 public surface. It does not currently claim to validate every possible source-level metadata detail, such as tuple element names or arbitrary custom attributes.
+
 ## v0.1.0 guarantees
 
 - at-least-once delivery when used with a conforming durable `IWebhookDeliveryStore`;
