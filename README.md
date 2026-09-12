@@ -102,6 +102,7 @@ await store.EnqueueAsync(message, DateTimeOffset.UtcNow);
 using var handler = new HttpClientHandler
 {
     AllowAutoRedirect = false,
+    UseCookies = false,
 };
 
 using var httpClient = new HttpClient(handler);
@@ -154,7 +155,7 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
 webhooks.AddHostedDispatcher();
 ```
 
-`AddHostedDispatcher()` is opt-in. Without it, applications can resolve and run `WebhookDispatcher` themselves. The default transport uses `IHttpClientFactory`, requires HTTPS destinations, disables automatic redirects, removes the default `HttpClientFactory` request loggers to avoid leaking secret-bearing destination paths or query strings, and sets `HttpClient.Timeout` to infinite so `WebhookHttpTransportOptions.AttemptTimeout` remains the authoritative per-attempt timeout. Additional handlers or client configuration can be added through `ReliableWebhooksBuilder.HttpClientBuilder`.
+`AddHostedDispatcher()` is opt-in. Without it, applications can resolve and run `WebhookDispatcher` themselves. The default transport uses `IHttpClientFactory`, requires HTTPS destinations, disables automatic redirects and cookies, removes the default `HttpClientFactory` request loggers to avoid leaking secret-bearing destination paths or query strings, and sets `HttpClient.Timeout` to infinite so `WebhookHttpTransportOptions.AttemptTimeout` remains the authoritative per-attempt timeout. Additional handlers or client configuration can be added through `ReliableWebhooksBuilder.HttpClientBuilder`. Direct `WebhookHttpTransport` construction uses the caller-provided `HttpClient` as configured, including any handler cookie policy.
 
 ReliableWebhooks treats destinations as operator-trusted by default after validating that they are absolute HTTP/HTTPS URIs, but the transport rejects plaintext `http://` unless `WebhookHttpTransportOptions.AllowInsecureHttp` is explicitly set. Use that opt-in only for development, loopback, or a deliberately trusted plaintext network. HMAC signing does not provide confidentiality or TLS server authentication. Applications that accept tenant-provided or otherwise untrusted webhook URLs should also configure `WebhookHttpTransportOptions.DestinationPolicy`, for example with `new PublicNetworkWebhookDestinationPolicy(allowedHosts: ["internal-webhooks.example"])`. That policy resolves DNS names before each attempt and denies loopback, unspecified, multicast, link-local, private, and shared carrier-grade targets for IPv4 and IPv6 unless a host is explicitly allow-listed. A deterministic destination denial is a permanent delivery failure and is not retried. With a standard `HttpClient`, validation happens before `SendAsync`; keep automatic redirects disabled and use an exact allow-list for any intended intranet destinations to avoid broad SSRF bypasses.
 
@@ -319,7 +320,7 @@ The application can then add OTLP, Azure Monitor, Prometheus, Grafana/Tempo, Dat
 | Jitter | 0 to 20% positive jitter before the maximum-delay cap |
 | `Retry-After` | Honored when it schedules later than the local retry delay; `MaxDelay` caps only local backoff/jitter |
 
-Automatic redirects must be disabled on the `HttpClient` handler so a single transport invocation cannot silently become multiple HTTP requests or change the request method. The default DI-managed client configures this automatically.
+Automatic redirects and automatic cookies must be disabled on the `HttpClient` handler so a single transport invocation cannot silently become multiple HTTP requests or retain receiver-controlled state for later deliveries. The default DI-managed client configures this automatically.
 
 Malformed `Retry-After` values are ignored. Valid delta-seconds and HTTP-date values are exposed through `WebhookDeliveryResult` and consumed by the default retry policy.
 

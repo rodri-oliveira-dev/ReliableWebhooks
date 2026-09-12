@@ -102,6 +102,7 @@ await store.EnqueueAsync(message, DateTimeOffset.UtcNow);
 using var handler = new HttpClientHandler
 {
     AllowAutoRedirect = false,
+    UseCookies = false,
 };
 
 using var httpClient = new HttpClient(handler);
@@ -154,7 +155,7 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
 webhooks.AddHostedDispatcher();
 ```
 
-`AddHostedDispatcher()` é opt-in. Sem ele, a aplicação pode resolver e executar `WebhookDispatcher` diretamente. O transporte padrão usa `IHttpClientFactory`, exige destinos HTTPS, desabilita redirects automáticos, remove os loggers padrão de requisição do `HttpClientFactory` para evitar vazamento de paths ou queries de destino que contenham secrets, e configura `HttpClient.Timeout` como infinito para que `WebhookHttpTransportOptions.AttemptTimeout` continue sendo o timeout autoritativo de cada tentativa. Handlers ou configurações adicionais podem ser aplicados através de `ReliableWebhooksBuilder.HttpClientBuilder`.
+`AddHostedDispatcher()` é opt-in. Sem ele, a aplicação pode resolver e executar `WebhookDispatcher` diretamente. O transporte padrão usa `IHttpClientFactory`, exige destinos HTTPS, desabilita redirects automáticos e cookies, remove os loggers padrão de requisição do `HttpClientFactory` para evitar vazamento de paths ou queries de destino que contenham secrets, e configura `HttpClient.Timeout` como infinito para que `WebhookHttpTransportOptions.AttemptTimeout` continue sendo o timeout autoritativo de cada tentativa. Handlers ou configurações adicionais podem ser aplicados através de `ReliableWebhooksBuilder.HttpClientBuilder`. Construção direta de `WebhookHttpTransport` usa o `HttpClient` fornecido pelo chamador do jeito que ele estiver configurado, incluindo qualquer política de cookies do handler.
 
 ReliableWebhooks trata destinos como confiáveis pelo operador por padrão depois de validar que são URIs HTTP/HTTPS absolutas, mas o transporte rejeita `http://` em texto claro salvo quando `WebhookHttpTransportOptions.AllowInsecureHttp` é configurado explicitamente. Use esse opt-in apenas para desenvolvimento, loopback ou uma rede em texto claro deliberadamente confiável. Assinatura HMAC não oferece confidencialidade nem autenticação de servidor TLS. Aplicações que aceitam URLs de tenants ou outra origem não confiável também devem configurar `WebhookHttpTransportOptions.DestinationPolicy`, por exemplo com `new PublicNetworkWebhookDestinationPolicy(allowedHosts: ["internal-webhooks.example"])`. Essa policy resolve DNS antes de cada tentativa e nega destinos loopback, unspecified, multicast, link-local, privados e carrier-grade compartilhados para IPv4 e IPv6, salvo quando um host é explicitamente permitido. Uma negação determinística de destino é uma falha permanente e não é retentada. Com `HttpClient` padrão, a validação acontece antes de `SendAsync`; mantenha redirects automáticos desabilitados e use allow-list exata para destinos de intranet intencionais.
 
@@ -282,7 +283,7 @@ builder.Services
 | Jitter | 0 a 20% de jitter positivo antes do limite máximo |
 | `Retry-After` | Respeitado quando agenda depois do delay local; `MaxDelay` limita apenas backoff/jitter locais |
 
-Redirects automáticos precisam ficar desabilitados para que uma chamada do transporte não se transforme silenciosamente em múltiplas requisições ou altere o método HTTP. O cliente gerenciado pela integração de DI já aplica essa configuração.
+Redirects automáticos e cookies automáticos precisam ficar desabilitados para que uma chamada do transporte não se transforme silenciosamente em múltiplas requisições nem preserve estado controlado pelo receptor para entregas futuras. O cliente gerenciado pela integração de DI já aplica essa configuração.
 
 ## Garantias e limites de entrega
 

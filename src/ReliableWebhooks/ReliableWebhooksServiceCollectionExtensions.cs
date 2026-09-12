@@ -55,6 +55,7 @@ public static class ReliableWebhooksServiceCollectionExtensions
             .ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
+                UseCookies = false,
             });
 
         return new ReliableWebhooksBuilder(services, httpClientBuilder);

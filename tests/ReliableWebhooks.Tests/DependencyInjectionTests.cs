@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -177,6 +179,43 @@ public sealed class DependencyInjectionTests
         Assert.DoesNotContain(querySecret, logText, StringComparison.Ordinal);
         Assert.DoesNotContain(headerSecret, logText, StringComparison.Ordinal);
         Assert.DoesNotContain("System.Net.Http.HttpClient.ReliableWebhooks", logText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DefaultHttpClientDoesNotPersistCookiesBetweenRequests()
+    {
+        await using LoopbackHttpServer server = new(
+        [
+            "Set-Cookie: reliable_cookie=secret-cookie; Path=/receiver",
+            string.Empty,
+        ]);
+        ServiceCollection services = new();
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks();
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        HttpClient client = provider
+            .GetRequiredService<IHttpClientFactory>()
+            .CreateClient(builder.HttpClientBuilder.Name);
+
+        using HttpResponseMessage first = await client.GetAsync(
+            server.CreateUri("/receiver/set"),
+            TestContext.Current.CancellationToken);
+        using HttpRequestMessage secondRequest = new(
+            HttpMethod.Get,
+            server.CreateUri("/receiver/next"));
+        secondRequest.Headers.Add("Authorization", "Bearer explicit-auth");
+        using HttpResponseMessage second = await client.SendAsync(
+            secondRequest,
+            TestContext.Current.CancellationToken);
+
+        first.EnsureSuccessStatusCode();
+        second.EnsureSuccessStatusCode();
+        string[] requests = await server.GetRequestsAsync(TestContext.Current.CancellationToken);
+
+        Assert.Contains("GET /receiver/set ", requests[0], StringComparison.Ordinal);
+        Assert.Contains("GET /receiver/next ", requests[1], StringComparison.Ordinal);
+        Assert.DoesNotContain("Cookie:", requests[1], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Authorization: Bearer explicit-auth", requests[1], StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -437,6 +476,104 @@ public sealed class DependencyInjectionTests
             {
                 provider.Add(categoryName, formatter(state, exception));
             }
+        }
+    }
+
+    private sealed class LoopbackHttpServer : IAsyncDisposable
+    {
+        private readonly TcpListener listener;
+        private readonly string[] responseHeaders;
+        private readonly Task<string[]> serverTask;
+
+        public LoopbackHttpServer(string[] responseHeaders)
+        {
+            this.responseHeaders = responseHeaders;
+            listener = new TcpListener(IPAddress.Loopback, port: 0);
+            listener.Start();
+            Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            serverTask = Task.Run(ServeAsync);
+        }
+
+        private int Port
+        {
+            get;
+        }
+
+        public Uri CreateUri(string path)
+        {
+            return new Uri($"http://127.0.0.1:{Port}{path}");
+        }
+
+        public async Task<string[]> GetRequestsAsync(CancellationToken cancellationToken)
+        {
+            return await serverTask.WaitAsync(cancellationToken);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            listener.Stop();
+            try
+            {
+                _ = await serverTask;
+            }
+            catch (SocketException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        private async Task<string[]> ServeAsync()
+        {
+            List<string> requests = new(responseHeaders.Length);
+
+            foreach (string headers in responseHeaders)
+            {
+                using TcpClient client = await listener.AcceptTcpClientAsync();
+                await using NetworkStream stream = client.GetStream();
+                requests.Add(await ReadRequestHeadersAsync(stream));
+                await WriteResponseAsync(stream, headers);
+            }
+
+            return requests.ToArray();
+        }
+
+        private static async Task<string> ReadRequestHeadersAsync(NetworkStream stream)
+        {
+            List<byte> bytes = [];
+            byte[] buffer = new byte[1];
+
+            while (true)
+            {
+                int read = await stream.ReadAsync(buffer);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                bytes.Add(buffer[0]);
+
+                if (bytes.Count >= 4
+                    && bytes[^4] == (byte)'\r'
+                    && bytes[^3] == (byte)'\n'
+                    && bytes[^2] == (byte)'\r'
+                    && bytes[^1] == (byte)'\n')
+                {
+                    break;
+                }
+            }
+
+            return Encoding.ASCII.GetString(bytes.ToArray());
+        }
+
+        private static async Task WriteResponseAsync(NetworkStream stream, string headers)
+        {
+            string response = string.IsNullOrWhiteSpace(headers)
+                ? "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+                : $"HTTP/1.1 204 No Content\r\n{headers}\r\nConnection: close\r\n\r\n";
+            byte[] bytes = Encoding.ASCII.GetBytes(response);
+            await stream.WriteAsync(bytes);
         }
     }
 
