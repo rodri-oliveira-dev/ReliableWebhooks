@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   dependency-review:
-    name: Revisar alterações de dependências
+    name: Dependency Review
     runs-on: ubuntu-latest
 
     steps:
