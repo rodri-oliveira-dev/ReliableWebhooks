@@ -196,7 +196,9 @@ public sealed class GitHubPackagesPublicationVisibilityTests
     {
         public TempDirectory()
         {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"reliablewebhooks-github-packages-tests-{Guid.NewGuid():N}");
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                $"reliablewebhooks-github-packages-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(Path);
         }
 
