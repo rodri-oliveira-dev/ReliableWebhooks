@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Release automation now publishes or deduplicates the validated `.snupkg` to NuGet.org alongside the validated `.nupkg` when Trusted Publishing is enabled, while preserving the no-rebuild publication path.
 - `WebhookHttpTransport` now reuses the immutable payload buffer captured by `WebhookMessage` for signing and request content instead of creating an additional full payload copy on each send.
 - Built-in metrics no longer tag raw webhook event types by default; logs and traces continue to include event type for correlation.
 - Custom webhook headers are validated when a `WebhookMessage` is created so invalid header names or control-character values cannot be persisted as poison deliveries.
