@@ -72,7 +72,9 @@ var readmeEntry = packageArchive.GetEntry("README.md")
 using (var readmeReader = new StreamReader(readmeEntry.Open()))
 {
     string packagedReadme = readmeReader.ReadToEnd();
-    AssertContains(packagedReadme, "dotnet add package ReliableWebhooks --version 0.1.0", "Package README installation command");
+    string readmeVersion = expectedVersion ?? packageVersion
+        ?? throw new InvalidOperationException("Versão do pacote não encontrada no .nuspec.");
+    AssertContains(packagedReadme, $"dotnet add package ReliableWebhooks --version {readmeVersion}", "Package README installation command");
     AssertContains(packagedReadme, "InMemoryWebhookDeliveryStore", "Package README durability warning");
     AssertContains(packagedReadme, "not durable", "Package README durability warning");
 }
@@ -302,7 +304,7 @@ static void AssertDependencies(XElement metadata, XNamespace ns)
         string expectedText = string.Join(", ", expected.OrderBy(static item => item, StringComparer.Ordinal));
         string actualText = string.Join(", ", actual.OrderBy(static item => item, StringComparer.Ordinal));
         throw new InvalidOperationException(
-            $"Package dependencies differ from the reviewed v0.1.0 set. Expected: {expectedText}. Actual: {actualText}.");
+            $"Package dependencies differ from the reviewed set. Expected: {expectedText}. Actual: {actualText}.");
     }
 }
 

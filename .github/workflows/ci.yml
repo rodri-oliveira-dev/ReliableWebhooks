@@ -199,8 +199,8 @@ jobs:
       - name: Compilar
         run: dotnet build ReliableWebhooks.slnx --configuration Release --no-restore
 
-      - name: Validar snapshot da API pública v0.1.0
-        run: dotnet run --file scripts/verify-public-api.cs -- src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll src/ReliableWebhooks/PublicApi.v0.1.0.txt
+      - name: Validar snapshot da API pública v1.0.0
+        run: dotnet run --file scripts/verify-public-api.cs -- src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll src/ReliableWebhooks/PublicApi.v1.0.0.txt
 
       - name: Validar gate opcional de Trusted Publishing
         shell: bash

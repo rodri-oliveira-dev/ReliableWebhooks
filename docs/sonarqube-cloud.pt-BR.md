@@ -46,7 +46,7 @@ Mantenha **Automatic Analysis desabilitado** no SonarQube Cloud enquanto este wo
 
 O workflow informa `sonar.projectVersion` usando o maior release tag SemVer alcançável. Antes do primeiro release tag, ele usa o `PackageVersion` do MSBuild como fallback.
 
-Durante o desenvolvimento da v0.1.0, o fallback é portanto `0.1.0` até existir um release tag alcançável a partir de `main`.
+Durante o desenvolvimento da v1.0.0, o fallback é portanto `1.0.0` até existir um release tag alcançável a partir de `main`.
 
 A estratégia **Previous Version** de New Code funciona bem com esse modelo de release.
 
