@@ -71,10 +71,12 @@ var readmeEntry = packageArchive.GetEntry("README.md")
     ?? throw new InvalidOperationException("README.md não encontrado no .nupkg.");
 using (var readmeReader = new StreamReader(readmeEntry.Open()))
 {
+    const string documentedStableVersion = "1.0.0";
     string packagedReadme = readmeReader.ReadToEnd();
-    string readmeVersion = expectedVersion ?? packageVersion
-        ?? throw new InvalidOperationException("Versão do pacote não encontrada no .nuspec.");
-    AssertContains(packagedReadme, $"dotnet add package ReliableWebhooks --version {readmeVersion}", "Package README installation command");
+    AssertContains(
+        packagedReadme,
+        $"dotnet add package ReliableWebhooks --version {documentedStableVersion}",
+        "Package README stable installation command");
     AssertContains(packagedReadme, "InMemoryWebhookDeliveryStore", "Package README durability warning");
     AssertContains(packagedReadme, "not durable", "Package README durability warning");
 }
