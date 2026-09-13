@@ -15,8 +15,8 @@ on:
       - scripts/verify-package-consumer.sh
       - scripts/verify-public-api.cs
       - scripts/verify-registry-package.cs
-      - src/ReliableWebhooks/PublicApi.v0.1.0.txt
-      - docs/release-v0.1.0.md
+      - src/ReliableWebhooks/PublicApi.v1.0.0.txt
+      - docs/release-v1.0.0.md
       - src/**
       - tests/**
       - Directory.Build.props
@@ -30,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact Semantic Version to validate or publish (for example 0.1.0 or 0.2.0-beta.1).
+        description: Exact Semantic Version to validate or publish (for example 1.0.0 or 1.1.0-beta.1).
         required: true
         type: string
       publish:
@@ -183,7 +183,7 @@ jobs:
         run: >-
           dotnet run --file scripts/verify-public-api.cs --
           src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll
-          src/ReliableWebhooks/PublicApi.v0.1.0.txt
+          src/ReliableWebhooks/PublicApi.v1.0.0.txt
 
       - name: Run tests
         run: dotnet test ReliableWebhooks.slnx --configuration Release --no-build
@@ -403,6 +403,7 @@ jobs:
           "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
           --source https://api.nuget.org/v3/index.json
           --api-key "$NUGET_API_KEY"
+          --no-symbols
           --skip-duplicate
 
       - name: Publish symbol package to NuGet.org

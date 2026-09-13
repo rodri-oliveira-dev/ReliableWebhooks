@@ -12,7 +12,7 @@ ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiáv
 
 Ela fornece componentes combináveis para identidade estável de webhooks, persistência e coordenação por lease, dispatch concorrente limitado, envio HTTP de uma única tentativa, assinatura HMAC-SHA256, classificação de respostas, agendamento determinístico de retries, observabilidade independente de backend e integração com injeção de dependência/hosting padrão do .NET. O objetivo é tornar explícitas as preocupações de confiabilidade da entrega de webhooks, em vez de escondê-las dentro de um loop de background opaco.
 
-> **Escopo da v0.1.0:** a primeira linha pública fornece o engine de entrega confiável, contrato `IWebhookDeliveryStore` independente de tecnologia, retries, leases, assinatura, observabilidade, injeção de dependência, hosted dispatcher e orientação de produção. A durabilidade entre reinícios é fornecida por um store durável e aderente ao contrato escolhido pela aplicação.
+> **Escopo da v1.0.0:** a primeira release pública fornece o engine de entrega confiável, contrato `IWebhookDeliveryStore` independente de tecnologia, retries, leases, assinatura, observabilidade, injeção de dependência, hosted dispatcher e orientação de produção. A durabilidade entre reinícios é fornecida por um store durável e aderente ao contrato escolhido pela aplicação.
 
 ## Por que ReliableWebhooks?
 
@@ -50,19 +50,19 @@ Quando combinado com um store durável, o modelo de entrega pretendido é **at-l
 
 ## Instalação
 
-O Package ID no NuGet é `ReliableWebhooks` e a biblioteca tem como target `net10.0`. Instale a v0.1.0 com:
+O Package ID no NuGet é `ReliableWebhooks` e a biblioteca tem como target `net10.0`. Instale a v1.0.0 com:
 
 ```bash
-dotnet add package ReliableWebhooks --version 0.1.0
+dotnet add package ReliableWebhooks --version 1.0.0
 ```
 
 ou:
 
 ```xml
-<PackageReference Include="ReliableWebhooks" Version="0.1.0" />
+<PackageReference Include="ReliableWebhooks" Version="1.0.0" />
 ```
 
-## Limites da v0.1.0
+## Limites da v1.0.0
 
 A primeira release pública mantém a persistência intencionalmente independente de tecnologia:
 
@@ -72,7 +72,7 @@ A primeira release pública mantém a persistência intencionalmente independent
 - exactly-once, idempotência no receiver, replay automático de dead letters e política de rotação de secrets não são garantidos;
 - EF Core, Dapper, ADO.NET, Redis, arquivos, bancos de documentos e outras tecnologias são escolhas opcionais do consumidor, não dependências do core.
 
-Consulte [`docs/production-usage.md`](docs/production-usage.md) para integração de produção e [`docs/release-v0.1.0.md`](docs/release-v0.1.0.md) para detalhes da release/distribuição.
+Consulte [`docs/production-usage.md`](docs/production-usage.md) para integração de produção e [`docs/release-v1.0.0.md`](docs/release-v1.0.0.md) para detalhes da release/distribuição.
 
 ## Começando
 
@@ -201,24 +201,6 @@ Os nomes dos headers podem ser customizados através de `WebhookHttpTransportOpt
 `WebhookMessage.Id` e `WebhookMessage.EventType` devem ser não vazios e não podem conter caracteres de controle como CR, LF ou NUL porque são usados em headers gerados e telemetria. `WebhookMessage.ContentType` deve ser um media type HTTP sintaticamente válido, incluindo media types de fornecedor como `application/vnd.example+json`.
 
 Headers customizados fornecidos ao `WebhookMessage` devem usar nomes válidos de token HTTP, são comparados sem diferenciar maiúsculas/minúsculas para detectar duplicidade e não podem conter caracteres de controle como CR, LF ou NUL nos valores. O transporte padrão reserva headers de roteamento e framing que dados da mensagem não podem controlar: `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization` e `Proxy-Connection`. Headers sensíveis de credencial, como `Authorization` e `Cookie`, não são aceitos na mensagem persistida; resolva-os no momento do envio por meio de `IWebhookRequestHeaderProvider` para que tentativas enfileiradas observem rotação sem regravar entregas armazenadas. Trate valores de headers customizados como sensíveis quando vierem de tenants, assinantes ou outra configuração externa. Usuários avançados que precisem de controle HTTP de nível mais baixo devem fornecer um `IWebhookDeliveryTransport` customizado.
-
-```csharp
-services.AddSingleton<IWebhookRequestHeaderProvider, MyWebhookCredentialHeaders>();
-
-internal sealed class MyWebhookCredentialHeaders : IWebhookRequestHeaderProvider
-{
-    public async ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
-        WebhookMessage message,
-        CancellationToken cancellationToken = default)
-    {
-        string token = await ResolveBearerTokenAsync(message, cancellationToken);
-        return new Dictionary<string, string>
-        {
-            ["Authorization"] = $"Bearer {token}",
-        };
-    }
-}
-```
 
 A entrada canônica `v1` do HMAC é versionada e usa frames com tamanho prefixado:
 
@@ -364,7 +346,7 @@ ReliableWebhooks trabalha com semântica explícita de entrega:
 - **A telemetria é independente de backend.** Exporters continuam sob responsabilidade da aplicação.
 - **A persistência é substituível.** O pacote principal não depende de um provider de banco específico.
 
-A v0.1.0 de `ReliableWebhooks` não exige um adapter de persistência de produção nativo. A aplicação fornece um `IWebhookDeliveryStore` durável compatível; adapters opcionais para EF Core, Dapper, Redis, arquivos ou outras tecnologias podem ser introduzidos de forma independente.
+A v1.0.0 de `ReliableWebhooks` não exige um adapter de persistência de produção nativo. A aplicação fornece um `IWebhookDeliveryStore` durável compatível; adapters opcionais para EF Core, Dapper, Redis, arquivos ou outras tecnologias podem ser introduzidos de forma independente.
 
 ## Extensibilidade
 

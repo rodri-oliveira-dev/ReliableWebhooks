@@ -12,7 +12,7 @@ ReliableWebhooks is a .NET 10 library for building reliable outbound webhook del
 
 It provides composable primitives for stable webhook identities, persistence and lease coordination, bounded concurrent dispatching, one-attempt HTTP delivery, HMAC-SHA256 request signing, response classification, deterministic retry scheduling, backend-neutral observability, and standard .NET dependency-injection/hosting integration. The goal is to make the reliability concerns around webhook delivery explicit instead of hiding them inside an opaque background loop.
 
-> **v0.1.0 scope:** the first public release line provides the reliable-delivery engine, technology-agnostic `IWebhookDeliveryStore` contract, retries, leasing, signing, observability, dependency injection, hosted dispatching, and production guidance. Production restart durability is supplied by a consumer-provided conforming durable store.
+> **v1.0.0 scope:** the first public release provides the reliable-delivery engine, technology-agnostic `IWebhookDeliveryStore` contract, retries, leasing, signing, observability, dependency injection, hosted dispatching, and production guidance. Production restart durability is supplied by a consumer-provided conforming durable store.
 
 ## Why ReliableWebhooks?
 
@@ -50,19 +50,19 @@ When combined with a durable store, the intended delivery model is **at-least-on
 
 ## Installation
 
-The NuGet package ID is `ReliableWebhooks` and the library targets `net10.0`. Install v0.1.0 with:
+The NuGet package ID is `ReliableWebhooks` and the library targets `net10.0`. Install v1.0.0 with:
 
 ```bash
-dotnet add package ReliableWebhooks --version 0.1.0
+dotnet add package ReliableWebhooks --version 1.0.0
 ```
 
 or:
 
 ```xml
-<PackageReference Include="ReliableWebhooks" Version="0.1.0" />
+<PackageReference Include="ReliableWebhooks" Version="1.0.0" />
 ```
 
-## v0.1.0 boundaries
+## v1.0.0 boundaries
 
 The first public release intentionally keeps persistence technology-agnostic:
 
@@ -72,7 +72,7 @@ The first public release intentionally keeps persistence technology-agnostic:
 - exactly-once delivery, receiver-side idempotency, automatic dead-letter replay, and secret-rotation policy are not guaranteed;
 - EF Core, Dapper, ADO.NET, Redis, files, document databases, and other persistence technologies are optional consumer choices, not core dependencies.
 
-See [`docs/production-usage.md`](docs/production-usage.md) for production integration and [`docs/release-v0.1.0.md`](docs/release-v0.1.0.md) for release/distribution details.
+See [`docs/production-usage.md`](docs/production-usage.md) for production integration and [`docs/release-v1.0.0.md`](docs/release-v1.0.0.md) for release/distribution details.
 
 ## Quick start
 
@@ -201,24 +201,6 @@ Header names can be customized through `WebhookHttpTransportOptions.Signing`. Ge
 `WebhookMessage.Id` and `WebhookMessage.EventType` must be non-empty and must not contain control characters such as CR, LF, or NUL because they are used in generated headers and telemetry. `WebhookMessage.ContentType` must be a syntactically valid HTTP media type, including vendor media types such as `application/vnd.example+json`.
 
 Custom headers supplied to `WebhookMessage` must use valid HTTP token names, are compared case-insensitively for duplicates, and must not contain control characters such as CR, LF, or NUL in their values. The default transport reserves routing and framing headers that message data must not control: `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, and `Proxy-Connection`. Sensitive credential headers such as `Authorization` and `Cookie` are not accepted in the persisted message; resolve them at send time through `IWebhookRequestHeaderProvider` so queued attempts pick up rotation without rewriting stored deliveries. Treat custom header values as sensitive whenever they come from tenants, subscribers, or other external configuration. Advanced users who need lower-level HTTP control should provide a custom `IWebhookDeliveryTransport`.
-
-```csharp
-services.AddSingleton<IWebhookRequestHeaderProvider, MyWebhookCredentialHeaders>();
-
-internal sealed class MyWebhookCredentialHeaders : IWebhookRequestHeaderProvider
-{
-    public async ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
-        WebhookMessage message,
-        CancellationToken cancellationToken = default)
-    {
-        string token = await ResolveBearerTokenAsync(message, cancellationToken);
-        return new Dictionary<string, string>
-        {
-            ["Authorization"] = $"Bearer {token}",
-        };
-    }
-}
-```
 
 The `v1` canonical HMAC input is versioned and length-prefixed:
 
@@ -371,7 +353,7 @@ ReliableWebhooks is designed around explicit delivery semantics:
 - **Telemetry is backend-neutral.** Logs, traces, and metrics use standard .NET APIs; exporters remain an application concern.
 - **Persistence is replaceable.** The core package does not depend on a specific database provider.
 
-`ReliableWebhooks` v0.1.0 does not require a built-in production persistence adapter. Applications provide a conforming durable `IWebhookDeliveryStore`; optional EF Core, Dapper, Redis, file-backed, or other adapters may be introduced independently.
+`ReliableWebhooks` v1.0.0 does not require a built-in production persistence adapter. Applications provide a conforming durable `IWebhookDeliveryStore`; optional EF Core, Dapper, Redis, file-backed, or other adapters may be introduced independently.
 
 ## Extensibility
 

@@ -46,7 +46,7 @@ Keep SonarQube Cloud **Automatic Analysis disabled** while this workflow is enab
 
 The workflow reports `sonar.projectVersion` using the highest reachable SemVer release tag. Before the first release tag exists, it falls back to the MSBuild `PackageVersion`.
 
-For the v0.1.0 development line, the fallback is therefore `0.1.0` until an actual release tag becomes reachable from `main`.
+For the v1.0.0 development line, the fallback is therefore `1.0.0` until an actual release tag becomes reachable from `main`.
 
 The **Previous Version** New Code strategy works well with this release model.
 

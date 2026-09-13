@@ -1,4 +1,4 @@
-# ReliableWebhooks v0.1.0 release
+# ReliableWebhooks v1.0.0 release
 
 This document records the release contract for the first public ReliableWebhooks package.
 
@@ -16,7 +16,7 @@ No long-lived NuGet API key is stored by the repository.
 
 GitHub Packages, the release tag, and the GitHub Release do not require `NUGET_USER`.
 
-To include NuGet.org in the v0.1.0 publication and satisfy the NuGet.org distribution target from issue #13:
+To include NuGet.org in the v1.0.0 publication:
 
 1. configure a NuGet.org Trusted Publishing policy that authorizes this repository, `.github/workflows/release.yml`, and the `release` GitHub environment;
 2. configure the repository variable `NUGET_USER` with the NuGet.org profile authorized by that policy;
@@ -30,12 +30,12 @@ The `main` branch ruleset requires the stable gates named `CI`, `CodeQL`, and `D
 
 From GitHub Actions, run the `Release` workflow on `main` with:
 
-- `version`: `0.1.0`;
+- `version`: `1.0.0`;
 - `publish`: `true`.
 
-The workflow validates SemVer, the exact `main` SHA, restore/build/tests, the v0.1.0 public API signature snapshot, package metadata, Source Link, symbol package identity/version, a clean custom-store consumer, manifest, checksums, and artifact attestation. It then creates or revalidates tag `v0.1.0` at the exact validated SHA before any registry publication. NuGet.org package and symbol publication are enabled only when `NUGET_USER` enables Trusted Publishing; GitHub Packages receives the primary package for every official release. The GitHub Release is created and published only after the enabled registry publications succeed.
+The workflow validates SemVer, the exact `main` SHA, restore/build/tests, the v1.0.0 public API signature snapshot, package metadata, Source Link, symbol package identity/version, a clean custom-store consumer, manifest, checksums, and artifact attestation. It then creates or revalidates tag `v1.0.0` at the exact validated SHA before any registry publication. NuGet.org package and symbol publication are enabled only when `NUGET_USER` enables Trusted Publishing; GitHub Packages receives the primary package for every official release. The GitHub Release is created and published only after the enabled registry publications succeed.
 
-`release-manifest.json` records the package filename/SHA-256 and symbol-package filename/SHA-256 for the validated commit. `SHA256SUMS` is deterministic and contains one line each for the `.nupkg`, `.snupkg`, and `release-manifest.json` in that order. The publish job downloads the previously validated artifact set, re-verifies both package hashes through `scripts/release-candidate.cs`, attests the `.nupkg`, `.snupkg`, manifest, and checksum file, and uploads only that verified artifact set to the GitHub Release. The NuGet.org publication path pushes the validated `.nupkg` and `.snupkg`; the GitHub Packages publication path pushes the validated `.nupkg`. No rebuild occurs in the publish job.
+`release-manifest.json` records the package filename/SHA-256 and symbol-package filename/SHA-256 for the validated commit. `SHA256SUMS` is deterministic and contains one line each for the `.nupkg`, `.snupkg`, and `release-manifest.json` in that order. The publish job downloads the previously validated artifact set, re-verifies both package hashes through `scripts/release-candidate.cs`, attests the `.nupkg`, `.snupkg`, manifest, and checksum file, and uploads only that verified artifact set to the GitHub Release. The NuGet.org publication path pushes the validated `.nupkg` with `--no-symbols` and then publishes the validated `.snupkg` in its dedicated step; the GitHub Packages publication path pushes the validated `.nupkg`. No rebuild occurs in the publish job.
 
 Before any primary package registry push, `scripts/verify-registry-package.cs` checks the NuGet v3 package-base-address endpoint for the requested PackageId/version. If the registry has no package, the workflow records `missing` and publishes the already validated `.nupkg`. If the registry already has the package, the workflow records `exact` only when the remote package content matches the validated candidate while allowing registry-added repository signature metadata. NuGet.org symbol publication still runs with `--skip-duplicate` during retries so a previously missing `.snupkg` can be completed after the primary `.nupkg` identity is proven. A content mismatch, registry authentication failure, or unavailable registry fails the release before the GitHub Release is created or changed. After each enabled primary package registry publication path, the same script verifies that the registry now serves the validated package contents; this also makes `--skip-duplicate` safe for retry/race recovery because a duplicate is accepted only after identity is proven.
 
@@ -43,7 +43,7 @@ Re-running the same version is recoverable only when the existing tag resolves t
 
 ## Release candidate gate
 
-The v0.1.0 release candidate must be validated from the final merged `main` commit before publication. Feature branches and pull requests may generate local packages and release-candidate manifests for review, but they must not create the official `v0.1.0` tag, GitHub Release, NuGet.org publication, or GitHub Packages publication.
+The v1.0.0 release candidate must be validated from the final merged `main` commit before publication. Feature branches and pull requests may generate local packages and release-candidate manifests for review, but they must not create the official `v1.0.0` tag, GitHub Release, NuGet.org publication, or GitHub Packages publication.
 
 Before running the official publish workflow, verify that:
 
@@ -54,15 +54,15 @@ Before running the official publish workflow, verify that:
 - the NuGet.org Trusted Publishing policy and `NUGET_USER` repository variable are configured when NuGet.org publication is required;
 - no long-lived NuGet API key, signing secret, credential-bearing webhook URL, payload, authorization header, cookie, or other delivery secret is committed or emitted through release artifacts.
 
-If NuGet.org Trusted Publishing is not configured, the repository-side release candidate can still validate, tag, publish to GitHub Packages, and create a GitHub Release, but issue #13 must remain only related rather than closed for the NuGet.org publication target until that external prerequisite is complete and the package is published.
+If NuGet.org Trusted Publishing is not configured, the repository-side release candidate can still validate, tag, publish to GitHub Packages, and create a GitHub Release, but the NuGet.org publication target remains incomplete until that external prerequisite is complete and the package is published.
 
 ## Public API snapshot
 
-`src/ReliableWebhooks/PublicApi.v0.1.0.txt` records externally visible types and members, including member accessibility, modifiers, generic constraints, constants, parameter defaults, custom modifiers, and C# nullable reference annotations for returns, parameters, properties, fields, arrays, and nested generic arguments.
+`src/ReliableWebhooks/PublicApi.v1.0.0.txt` records externally visible types and members, including member accessibility, modifiers, generic constraints, constants, parameter defaults, custom modifiers, and C# nullable reference annotations for returns, parameters, properties, fields, arrays, and nested generic arguments.
 
-The snapshot is a source-compatibility gate for the v0.1.0 public surface. It does not currently claim to validate every possible source-level metadata detail, such as tuple element names or arbitrary custom attributes.
+The snapshot is a source-compatibility gate for the v1.0.0 public surface. It does not currently claim to validate every possible source-level metadata detail, such as tuple element names or arbitrary custom attributes.
 
-## v0.1.0 guarantees
+## v1.0.0 guarantees
 
 - at-least-once delivery when used with a conforming durable `IWebhookDeliveryStore`;
 - stable-ID idempotent enqueue semantics;
@@ -75,7 +75,7 @@ The snapshot is a source-compatibility gate for the v0.1.0 public surface. It do
 - structured logs, traces, and metrics through standard .NET APIs without default payload, credential, destination-secret, signature, or high-cardinality metric leakage;
 - Microsoft DI and optional hosted-dispatcher integration with singleton, scoped, and transient store registrations supported.
 
-## v0.1.0 limitations
+## v1.0.0 limitations
 
 - no built-in production durable store is included;
 - `InMemoryWebhookDeliveryStore` does not survive process restarts;
