@@ -494,6 +494,26 @@ public sealed class DependencyInjectionTests
         Assert.Contains("MessageLimits.MaxPayloadBytes cannot be negative.", exception.Failures);
     }
 
+    [Fact]
+    public void InvalidMetricOptionsFailWithActionableValidationMessage()
+    {
+        ServiceCollection services = new();
+        services.AddSingleton<IWebhookDeliveryStore, InMemoryWebhookDeliveryStore>();
+        _ = services.AddReliableWebhooks(options =>
+        {
+            options.Dispatcher.Metrics = new WebhookMetricsOptions
+            {
+                EventTypeTagAllowList = new HashSet<string>(["valid", "bad\nevent"], StringComparer.Ordinal),
+            };
+        });
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        OptionsValidationException exception = Assert.Throws<OptionsValidationException>(
+            () => provider.GetRequiredService<WebhookDispatcher>());
+        Assert.Contains("Dispatcher.Metrics.EventTypeTagAllowList must not contain control characters.", exception.Failures);
+    }
+
     private static WebhookMessage CreateMessage(
         string id,
         Uri? destination = null,

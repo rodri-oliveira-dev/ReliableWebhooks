@@ -38,6 +38,7 @@ public sealed class WebhookDispatcher
     private readonly TimeSpan pollInterval;
     private readonly TimeSpan shutdownGracePeriod;
     private readonly TimeProvider timeProvider;
+    private readonly WebhookMetricsOptions metricsOptions;
 
     /// <summary>
     /// Initializes a new webhook dispatcher without structured logging.
@@ -93,6 +94,7 @@ public sealed class WebhookDispatcher
         pollInterval = options.PollInterval;
         shutdownGracePeriod = options.ShutdownGracePeriod;
         timeProvider = options.TimeProvider;
+        metricsOptions = options.Metrics;
         this.delay = delay ?? new TimeProviderDispatcherDelay(timeProvider);
     }
 
@@ -203,6 +205,7 @@ public sealed class WebhookDispatcher
         }
 
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
+        ArgumentNullException.ThrowIfNull(options.Metrics);
     }
 
     private async Task ProcessLeaseAsync(
@@ -571,11 +574,9 @@ public sealed class WebhookDispatcher
             : null;
     }
 
-    private static TagList CreateEventTypeTags(string eventType)
+    private TagList CreateEventTypeTags(string eventType)
     {
-        TagList tags = default;
-        tags.Add(ReliableWebhooksInstrumentation.EventTypeTagName, eventType);
-        return tags;
+        return ReliableWebhooksInstrumentation.CreateEventTypeMetricTags(metricsOptions, eventType);
     }
 
     private static string? DescribeFailure(WebhookDeliveryResult result)

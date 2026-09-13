@@ -301,15 +301,15 @@ Payloads, secrets, signatures, and destination URLs are never added automaticall
 
 | Instrument | Type | Tags |
 | --- | --- | --- |
-| `reliablewebhooks.delivery.queued` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.attempted` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.succeeded` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.retried` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.permanently_failed` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.dead_lettered` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.duration` | Histogram in milliseconds | `webhook.event_type`, `webhook.outcome` |
+| `reliablewebhooks.delivery.queued` | Counter | None by default |
+| `reliablewebhooks.delivery.attempted` | Counter | None by default |
+| `reliablewebhooks.delivery.succeeded` | Counter | None by default |
+| `reliablewebhooks.delivery.retried` | Counter | None by default |
+| `reliablewebhooks.delivery.permanently_failed` | Counter | None by default |
+| `reliablewebhooks.delivery.dead_lettered` | Counter | None by default |
+| `reliablewebhooks.delivery.duration` | Histogram in milliseconds | `webhook.outcome` |
 
-`webhook.event_type` should come from a bounded application-defined vocabulary. Never encode customer IDs, request IDs, URLs, or other unbounded values into event types. Webhook IDs and arbitrary destinations are not metric tags.
+Raw `WebhookMessage.EventType` is not used as a metric dimension by default. To opt into an event-type metric tag, configure `WebhookMetricsOptions.EventTypeTagAllowList` with a bounded vocabulary; values outside the allow-list are reported as `other`. Never include customer IDs, request IDs, destinations, webhook IDs, payload data, signatures, or other high-cardinality/sensitive values in metric dimensions.
 
 ### OpenTelemetry integration
 

@@ -49,4 +49,13 @@ public sealed class WebhookDispatcherOptions
         get;
         set;
     } = TimeProvider.System;
+
+    /// <summary>
+    /// Gets or sets the built-in metric-dimension policy used by the dispatcher.
+    /// </summary>
+    public WebhookMetricsOptions Metrics
+    {
+        get;
+        set;
+    } = new();
 }

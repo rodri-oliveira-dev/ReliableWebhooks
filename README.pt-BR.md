@@ -242,15 +242,15 @@ Payloads, segredos, assinaturas e URLs de destino não são adicionados automati
 
 | Instrumento | Tipo | Tags |
 | --- | --- | --- |
-| `reliablewebhooks.delivery.queued` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.attempted` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.succeeded` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.retried` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.permanently_failed` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.dead_lettered` | Counter | `webhook.event_type` |
-| `reliablewebhooks.delivery.duration` | Histogram em milissegundos | `webhook.event_type`, `webhook.outcome` |
+| `reliablewebhooks.delivery.queued` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.attempted` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.succeeded` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.retried` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.permanently_failed` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.dead_lettered` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.duration` | Histogram em milissegundos | `webhook.outcome` |
 
-`webhook.event_type` deve vir de um vocabulário limitado pela aplicação. IDs de cliente, request IDs, URLs e outros valores de alta cardinalidade não devem ser codificados no tipo do evento.
+`WebhookMessage.EventType` bruto não é usado como dimensão de métrica por padrão. Para habilitar uma tag de tipo de evento, configure `WebhookMetricsOptions.EventTypeTagAllowList` com um vocabulário limitado; valores fora da allow-list são reportados como `other`. Nunca inclua IDs de cliente, request IDs, destinos, IDs de webhook, payloads, assinaturas ou outros valores sensíveis/de alta cardinalidade em dimensões de métricas.
 
 ### Integração com OpenTelemetry
 

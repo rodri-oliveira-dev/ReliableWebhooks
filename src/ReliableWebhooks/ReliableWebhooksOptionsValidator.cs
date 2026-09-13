@@ -53,6 +53,50 @@ internal sealed class ReliableWebhooksOptionsValidator : IValidateOptions<Reliab
         {
             failures.Add("Dispatcher.TimeProvider must not be null.");
         }
+
+        ValidateMetrics(options.Metrics, "Dispatcher.Metrics", failures);
+    }
+
+    private static void ValidateMetrics(
+        WebhookMetricsOptions? options,
+        string path,
+        List<string> failures)
+    {
+        if (options is null)
+        {
+            failures.Add($"{path} must not be null.");
+            return;
+        }
+
+        if (options.EventTypeTagAllowList is null)
+        {
+            failures.Add($"{path}.EventTypeTagAllowList must not be null.");
+            return;
+        }
+
+        foreach (string eventType in options.EventTypeTagAllowList)
+        {
+            if (string.IsNullOrWhiteSpace(eventType))
+            {
+                failures.Add($"{path}.EventTypeTagAllowList must not contain empty or whitespace values.");
+                break;
+            }
+
+            if (ContainsControlCharacter(eventType))
+            {
+                failures.Add($"{path}.EventTypeTagAllowList must not contain control characters.");
+                break;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(options.UnknownEventTypeTagValue))
+        {
+            failures.Add($"{path}.UnknownEventTypeTagValue must not be empty or whitespace.");
+        }
+        else if (ContainsControlCharacter(options.UnknownEventTypeTagValue))
+        {
+            failures.Add($"{path}.UnknownEventTypeTagValue must not contain control characters.");
+        }
     }
 
     private static void ValidateMessageLimits(
@@ -193,5 +237,18 @@ internal sealed class ReliableWebhooksOptionsValidator : IValidateOptions<Reliab
         {
             failures.Add("Transport.Signing.TimeProvider must not be null.");
         }
+    }
+
+    private static bool ContainsControlCharacter(string value)
+    {
+        foreach (char character in value)
+        {
+            if (character <= '\u001f' || character == '\u007f')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

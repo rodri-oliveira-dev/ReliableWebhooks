@@ -10,10 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Added an opt-in webhook destination authorization policy hook and `PublicNetworkWebhookDestinationPolicy` for deployments that accept untrusted or tenant-configurable webhook URLs.
 - Added configurable `WebhookMessageLimits` and DI enqueue-service enforcement for outbound payload, custom-header, and persisted metadata size limits.
+- Added `WebhookMetricsOptions` to keep built-in metric event-type dimensions disabled by default and allow bounded opt-in through an event-type allow-list.
 
 ### Changed
 
 - `WebhookHttpTransport` now reuses the immutable payload buffer captured by `WebhookMessage` for signing and request content instead of creating an additional full payload copy on each send.
+- Built-in metrics no longer tag raw webhook event types by default; logs and traces continue to include event type for correlation.
 - Custom webhook headers are validated when a `WebhookMessage` is created so invalid header names or control-character values cannot be persisted as poison deliveries.
 - Webhook IDs, event types, and content types are validated when a `WebhookMessage` is created before those values can be used in generated HTTP headers or telemetry.
 - Webhook HTTP transport now requires HTTPS destinations by default; plaintext HTTP delivery requires explicit `WebhookHttpTransportOptions.AllowInsecureHttp` opt-in.

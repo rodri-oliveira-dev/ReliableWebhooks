@@ -400,7 +400,7 @@ ReliableWebhooksInstrumentation.MeterName          // ReliableWebhooks
 
 The library emits structured logs for enqueue, claim, attempt, success, retry, permanent failure, dead letter, cancellation, lease loss, and unexpected failures. `InstrumentedWebhookDeliveryStore` adds enqueue logging and the queued metric around any store implementation.
 
-Do not add payloads, signatures, secrets, full destination URLs, customer IDs, or other high-cardinality/sensitive values to metrics. The built-in metric dimensions intentionally remain bounded.
+Built-in metrics omit raw event-type dimensions by default. `WebhookMetricsOptions.EventTypeTagAllowList` can opt into the `webhook.event_type` tag for a bounded vocabulary; unapproved event types use `UnknownEventTypeTagValue`, which defaults to `other`. For dispatcher metrics, configure `Dispatcher.Metrics`. For enqueue metrics emitted by `InstrumentedWebhookDeliveryStore`, pass the same `WebhookMetricsOptions` to the instrumented-store constructor. Do not add payloads, signatures, secrets, full destination URLs, customer IDs, webhook IDs, or other high-cardinality/sensitive values to metrics.
 
 OpenTelemetry consumers can register the activity source and meter in their own application pipeline without adding an OpenTelemetry dependency to ReliableWebhooks itself.
 
@@ -412,6 +412,8 @@ OpenTelemetry consumers can register the activity source and meter in their own 
 | `Dispatcher.LeaseDuration` | `1 minute` | Positive duration; choose longer than a normal attempt or renew ownership |
 | `Dispatcher.PollInterval` | `1 second` | Positive duration |
 | `Dispatcher.ShutdownGracePeriod` | `30 seconds` | Zero or greater |
+| `Dispatcher.Metrics.EventTypeTagAllowList` | Empty | Bounded set of event types allowed as metric tag values; empty omits the tag |
+| `Dispatcher.Metrics.UnknownEventTypeTagValue` | `other` | Bounded fallback value for unapproved event types |
 | `Retry.MaxAttempts` | `5` | Integer greater than zero; includes the current attempt |
 | `Retry.BaseDelay` | `1 second` | Positive duration |
 | `Retry.MaxDelay` | `5 minutes` | Positive and greater than or equal to `BaseDelay` |
