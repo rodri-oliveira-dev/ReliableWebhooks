@@ -202,7 +202,10 @@ public sealed class GitHubPackagesPublicationVisibilityTests
             Directory.CreateDirectory(Path);
         }
 
-        public string Path { get; }
+        public string Path
+        {
+            get;
+        }
 
         public void Dispose()
         {
