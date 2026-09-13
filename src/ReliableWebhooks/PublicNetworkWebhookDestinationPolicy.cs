@@ -112,8 +112,14 @@ public sealed class PublicNetworkWebhookDestinationPolicy : IWebhookDestinationP
             || (bytes[0] == 100 && bytes[1] >= 64 && bytes[1] <= 127)
             || (bytes[0] == 169 && bytes[1] == 254)
             || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+            || (bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 0)
+            || (bytes[0] == 192 && bytes[1] == 0 && bytes[2] == 2)
+            || (bytes[0] == 192 && bytes[1] == 88 && bytes[2] == 99)
             || (bytes[0] == 192 && bytes[1] == 168)
-            || (bytes[0] >= 224 && bytes[0] <= 239);
+            || (bytes[0] == 198 && (bytes[1] == 18 || bytes[1] == 19))
+            || (bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100)
+            || (bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113)
+            || bytes[0] >= 224;
     }
 
     private static bool IsRestrictedIPv6(IPAddress address)
@@ -122,6 +128,35 @@ public sealed class PublicNetworkWebhookDestinationPolicy : IWebhookDestinationP
 
         return address.IsIPv6LinkLocal
             || address.IsIPv6Multicast
-            || (bytes[0] & 0xfe) == 0xfc;
+            || (bytes[0] & 0xfe) == 0xfc
+            || IsIPv6Range(bytes, [0x00, 0x64, 0xff, 0x9b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], 96)
+            || IsIPv6Range(bytes, [0x00, 0x64, 0xff, 0x9b, 0x00, 0x01], 48)
+            || IsIPv6Range(bytes, [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], 64)
+            || IsIPv6Range(bytes, [0x20, 0x01, 0x00], 23)
+            || IsIPv6Range(bytes, [0x20, 0x01, 0x00, 0x02, 0x00, 0x00], 48)
+            || IsIPv6Range(bytes, [0x20, 0x01, 0x0d, 0xb8], 32)
+            || IsIPv6Range(bytes, [0x20, 0x02], 16);
+    }
+
+    private static bool IsIPv6Range(byte[] bytes, ReadOnlySpan<byte> prefix, int prefixLength)
+    {
+        int wholeBytes = prefixLength / 8;
+        int remainingBits = prefixLength % 8;
+
+        for (var index = 0; index < wholeBytes; index++)
+        {
+            if (bytes[index] != prefix[index])
+            {
+                return false;
+            }
+        }
+
+        if (remainingBits == 0)
+        {
+            return true;
+        }
+
+        int mask = 0xff << (8 - remainingBits);
+        return (bytes[wholeBytes] & mask) == (prefix[wholeBytes] & mask);
     }
 }

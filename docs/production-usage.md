@@ -272,7 +272,7 @@ ASCII("rw-hmac-sha256/v1\0")
 || frame(rawRequestBodyBytes)
 ```
 
-Each `frame(value)` is an eight-byte big-endian length followed by the exact value bytes. The authenticated values are the timestamp, stable webhook ID, event type, content type, and exact body bytes. Custom headers, destination URI, and the configurable signing header names are outside the built-in HMAC envelope. If receivers authorize or route by custom headers or destination-specific context, bind those values in the application payload or use a custom signer.
+Each `frame(value)` is an eight-byte big-endian length followed by the exact value bytes. The authenticated values are the timestamp, stable webhook ID, event type, normalized content type, and exact body bytes. `WebhookMessage` normalizes the content type with the platform HTTP media-type parser before persistence/signing so receivers should verify the serialized `Content-Type` header value they receive. Custom headers, destination URI, and the configurable signing header names are outside the built-in HMAC envelope. If receivers authorize or route by custom headers or destination-specific context, bind those values in the application payload or use a custom signer.
 
 Custom headers are validated before a `WebhookMessage` can be enqueued or persisted. Header names must use HTTP token syntax, duplicate names are rejected case-insensitively, values cannot be null, and values cannot contain control characters such as CR, LF, or NUL. Syntax validation is separate from the reserved-header policy: the default transport owns routing, authority, and HTTP framing fields, so message data cannot supply `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, or `Proxy-Connection`. This protects destination and SSRF decisions from HTTP authority manipulation and avoids handler-dependent framing semantics. Sensitive credential headers such as `Authorization` and `Cookie` are also rejected from `WebhookMessage.Headers`; resolve them at send time with `IWebhookRequestHeaderProvider` so they are not copied into durable delivery records and queued attempts can observe rotation. `Proxy-Authorization` remains unsupported by the default delivery-message model; configure proxy credentials on the application-owned HTTP handler/proxy instead. The HTTP transport applies allowed custom headers through normal validated `HttpHeaders` APIs and supports both request headers and content headers such as `Content-Language`. Applications that let tenants or subscribers configure custom headers remain responsible for deciding which allowed header names make sense for their domain and for treating header values as sensitive data. Advanced users who truly need low-level HTTP control should provide a custom `IWebhookDeliveryTransport` rather than weakening the safe default transport.
 
@@ -374,7 +374,7 @@ The runnable sample includes timestamp parsing and replay-window validation arou
 
 ## Receiver idempotency
 
-Signature verification authenticates the timestamp, generated webhook ID, generated event type, content type, and raw body bytes; it does not make receiver processing idempotent and does not authenticate custom headers, destination URI, or other metadata outside the canonical bytes.
+Signature verification authenticates the timestamp, generated webhook ID, generated event type, normalized content type, and raw body bytes; it does not make receiver processing idempotent and does not authenticate custom headers, destination URI, or other metadata outside the canonical bytes.
 
 A typical receiver should:
 
@@ -456,7 +456,7 @@ options.Transport = new WebhookHttpTransportOptions
 };
 ```
 
-`PublicNetworkWebhookDestinationPolicy` resolves DNS before each attempt and denies destinations that resolve to loopback, unspecified, multicast, link-local, RFC1918 private IPv4, IPv6 unique-local, shared carrier-grade IPv4, or other non-public address families. A denied destination returns a permanent delivery result with `WebhookTransportFailureKind.DestinationPolicyDenied`, so the dispatcher records a permanent failure instead of retrying forever.
+`PublicNetworkWebhookDestinationPolicy` resolves DNS before each attempt and denies destinations that resolve to loopback, unspecified, multicast, link-local, RFC1918 private IPv4, IPv6 unique-local, shared carrier-grade IPv4, documentation, benchmarking, transition, reserved, or other special-use/non-public address families. A denied destination returns a permanent delivery result with `WebhookTransportFailureKind.DestinationPolicyDenied`, so the dispatcher records a permanent failure instead of retrying forever.
 
 Use `allowedHosts` only for exact host names or IP literals that your operators intentionally allow, such as a known intranet webhook endpoint. This is safer than disabling the policy for every destination.
 
@@ -503,7 +503,7 @@ Check `Retry-After`, exponential backoff, jitter, `MaxDelay`, and the dispatcher
 
 ### Signature verification fails
 
-Verify the raw body bytes, timestamp text, generated webhook ID, event type, content type, shared secret, and signing-header names. Do not parse and reserialize JSON before calculating the HMAC. Ensure the receiver rebuilds the `rw-hmac-sha256/v1` length-prefixed frames before the exact body bytes and compares the digest in constant time.
+Verify the raw body bytes, timestamp text, generated webhook ID, event type, serialized content type, shared secret, and signing-header names. Do not parse and reserialize JSON before calculating the HMAC. Ensure the receiver rebuilds the `rw-hmac-sha256/v1` length-prefixed frames before the exact body bytes and compares the digest in constant time.
 
 ### Process restarts lose queued work
 

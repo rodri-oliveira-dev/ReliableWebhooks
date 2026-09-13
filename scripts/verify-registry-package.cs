@@ -1,5 +1,6 @@
 #:property RestorePackagesWithLockFile=false
 
+using System.IO.Compression;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
@@ -41,7 +42,9 @@ static async Task<int> RunAsync(string[] args)
     using HttpClient client = CreateClient(options);
     Uri packageBaseAddress = await ResolvePackageBaseAddressAsync(client, source).ConfigureAwait(false);
     Uri remotePackageUri = CreateFlatContainerPackageUri(packageBaseAddress, packageId, version);
-    string expectedHash = ComputeSha256(packagePath);
+    byte[] expectedPackage = await File.ReadAllBytesAsync(packagePath).ConfigureAwait(false);
+    string expectedArchiveHash = ComputeSha256(expectedPackage);
+    string expectedContentHash = ComputePackageContentSha256(expectedPackage);
     byte[]? remotePackage = await DownloadWithRetryAsync(
         client,
         remotePackageUri,
@@ -60,16 +63,19 @@ static async Task<int> RunAsync(string[] args)
         throw new InvalidOperationException($"Registry package was not found: {remotePackageUri}");
     }
 
-    string actualHash = Convert.ToHexString(SHA256.HashData(remotePackage)).ToLowerInvariant();
-    if (!string.Equals(expectedHash, actualHash, StringComparison.Ordinal))
+    string actualArchiveHash = ComputeSha256(remotePackage);
+    string actualContentHash = ComputePackageContentSha256(remotePackage);
+    if (!string.Equals(expectedContentHash, actualContentHash, StringComparison.Ordinal))
     {
         throw new InvalidOperationException(
-            $"Registry package hash mismatch for {packageId} {version}: expected {expectedHash}, got {actualHash}.");
+            $"Registry package content mismatch for {packageId} {version}: expected {expectedContentHash}, got {actualContentHash}. "
+            + $"Archive SHA256 expected {expectedArchiveHash}, got {actualArchiveHash}.");
     }
 
     WriteStatus("exact");
     Console.WriteLine($"Registry package verified: {packageId} {version}");
-    Console.WriteLine($"SHA256: {actualHash}");
+    Console.WriteLine($"Package content SHA256: {actualContentHash}");
+    Console.WriteLine($"Archive SHA256: {actualArchiveHash}");
     return 0;
 }
 
@@ -186,10 +192,59 @@ static async Task<byte[]?> ReadUriBytesOrMissingAsync(HttpClient client, Uri uri
     return await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
 }
 
-static string ComputeSha256(string path)
+static string ComputeSha256(byte[] bytes)
 {
-    using var stream = File.OpenRead(path);
-    return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+}
+
+static string ComputePackageContentSha256(byte[] packageBytes)
+{
+    using MemoryStream stream = new(packageBytes);
+    using ZipArchive archive = new(stream, ZipArchiveMode.Read);
+    using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+    foreach (ZipArchiveEntry entry in archive.Entries
+        .Where(static entry => !IsDirectoryEntry(entry) && !IsRepositorySignatureEntry(entry.FullName))
+        .OrderBy(static entry => entry.FullName, StringComparer.Ordinal))
+    {
+        AppendUtf8(hash, entry.FullName.Replace('\\', '/'));
+        AppendLength(hash, entry.Length);
+
+        using Stream entryStream = entry.Open();
+        byte[] buffer = new byte[8192];
+        int read;
+        while ((read = entryStream.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            hash.AppendData(buffer.AsSpan(0, read));
+        }
+    }
+
+    return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+}
+
+static bool IsRepositorySignatureEntry(string entryName)
+{
+    return string.Equals(entryName, ".signature.p7s", StringComparison.OrdinalIgnoreCase);
+}
+
+static bool IsDirectoryEntry(ZipArchiveEntry entry)
+{
+    return entry.FullName.EndsWith('/')
+        || entry.FullName.EndsWith('\\');
+}
+
+static void AppendUtf8(IncrementalHash hash, string value)
+{
+    byte[] bytes = Encoding.UTF8.GetBytes(value);
+    AppendLength(hash, bytes.Length);
+    hash.AppendData(bytes);
+}
+
+static void AppendLength(IncrementalHash hash, long value)
+{
+    Span<byte> buffer = stackalloc byte[sizeof(long)];
+    System.Buffers.Binary.BinaryPrimitives.WriteInt64BigEndian(buffer, value);
+    hash.AppendData(buffer);
 }
 
 static Dictionary<string, string> ParseOptions(string[] args)

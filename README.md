@@ -158,7 +158,7 @@ webhooks.AddHostedDispatcher();
 
 `AddHostedDispatcher()` is opt-in. Without it, applications can resolve and run `WebhookDispatcher` themselves. The default transport uses `IHttpClientFactory`, requires HTTPS destinations, disables automatic redirects and cookies, removes the default `HttpClientFactory` request loggers to avoid leaking secret-bearing destination paths or query strings, and sets `HttpClient.Timeout` to infinite so `WebhookHttpTransportOptions.AttemptTimeout` remains the authoritative per-attempt timeout. Additional handlers or client configuration can be added through `ReliableWebhooksBuilder.HttpClientBuilder`. Direct `WebhookHttpTransport` construction uses the caller-provided `HttpClient` as configured, including any handler cookie policy.
 
-ReliableWebhooks treats destinations as operator-trusted by default after validating that they are absolute HTTP/HTTPS URIs, but the transport rejects plaintext `http://` unless `WebhookHttpTransportOptions.AllowInsecureHttp` is explicitly set. Use that opt-in only for development, loopback, or a deliberately trusted plaintext network. HMAC signing does not provide confidentiality or TLS server authentication. Applications that accept tenant-provided or otherwise untrusted webhook URLs should also configure `WebhookHttpTransportOptions.DestinationPolicy`, for example with `new PublicNetworkWebhookDestinationPolicy(allowedHosts: ["internal-webhooks.example"])`. That policy resolves DNS names before each attempt and denies loopback, unspecified, multicast, link-local, private, and shared carrier-grade targets for IPv4 and IPv6 unless a host is explicitly allow-listed. A deterministic destination denial is a permanent delivery failure and is not retried. With a standard `HttpClient`, validation happens before `SendAsync`; keep automatic redirects disabled and use an exact allow-list for any intended intranet destinations to avoid broad SSRF bypasses.
+ReliableWebhooks treats destinations as operator-trusted by default after validating that they are absolute HTTP/HTTPS URIs, but the transport rejects plaintext `http://` unless `WebhookHttpTransportOptions.AllowInsecureHttp` is explicitly set. Use that opt-in only for development, loopback, or a deliberately trusted plaintext network. HMAC signing does not provide confidentiality or TLS server authentication. Applications that accept tenant-provided or otherwise untrusted webhook URLs should also configure `WebhookHttpTransportOptions.DestinationPolicy`, for example with `new PublicNetworkWebhookDestinationPolicy(allowedHosts: ["internal-webhooks.example"])`. That policy resolves DNS names before each attempt and denies loopback, unspecified, multicast, link-local, private, shared carrier-grade, documentation, benchmarking, transition, reserved, and other special-use targets for IPv4 and IPv6 unless a host is explicitly allow-listed. A deterministic destination denial is a permanent delivery failure and is not retried. With a standard `HttpClient`, validation happens before `SendAsync`; keep automatic redirects disabled and use an exact allow-list for any intended intranet destinations to avoid broad SSRF bypasses.
 
 The default response classifier, retry policy, transport, and dispatcher are registered with replaceable DI registrations. Stores and signers are application-provided, and dispatcher timing or retry jitter abstractions can also be replaced. Invalid dispatcher, retry, transport, or signing options are validated when options are resolved and by Generic Host startup validation.
 
@@ -194,7 +194,7 @@ With the default `WebhookSigningOptions`, each signed request contains:
 
 - `X-Webhook-Id`: the stable `WebhookMessage.Id`;
 - `X-Webhook-Event`: the `WebhookMessage.EventType`;
-- `Content-Type`: the `WebhookMessage.ContentType`;
+- `Content-Type`: the normalized `WebhookMessage.ContentType`;
 - `X-Webhook-Timestamp`: the UTC Unix timestamp in seconds;
 - `X-Webhook-Signature`: `v1=<lowercase HMAC-SHA256 hex digest>`.
 
@@ -233,7 +233,7 @@ ASCII("rw-hmac-sha256/v1\0")
 || frame(exactRequestPayloadBytes)
 ```
 
-Each `frame(value)` is an eight-byte big-endian length followed by the exact value bytes. The payload bytes are not reserialized or normalized before signing. The same byte array is used both for HMAC calculation and for the HTTP request content. The authenticated values are the timestamp, webhook ID, event type, content type, and body bytes. Custom headers, destination URI, and the configurable signing header names are not part of the built-in HMAC envelope.
+Each `frame(value)` is an eight-byte big-endian length followed by the exact value bytes. The payload bytes are not reserialized or normalized before signing. The same byte array is used both for HMAC calculation and for the HTTP request content. The content type is normalized with the platform HTTP media-type parser when the `WebhookMessage` is created, so the authenticated content-type frame matches the serialized `Content-Type` header sent by the default transport. The authenticated values are the timestamp, webhook ID, event type, content type, and body bytes. Custom headers, destination URI, and the configurable signing header names are not part of the built-in HMAC envelope.
 
 A receiver can verify a delivery independently by:
 

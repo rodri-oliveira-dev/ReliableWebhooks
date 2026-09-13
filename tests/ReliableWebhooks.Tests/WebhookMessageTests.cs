@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using ReliableWebhooks;
 using Xunit;
@@ -122,6 +123,16 @@ public sealed class WebhookMessageTests
         Assert.Equal("order_01HRDB5TK7A9Z9", message.Id);
         Assert.Equal("pedido.criado", message.EventType);
         Assert.Equal("application/vnd.reliable.order+json; charset=utf-8", message.ContentType);
+    }
+
+    [Fact]
+    public void ConstructorNormalizesContentTypeToHttpHeaderSerialization()
+    {
+        const string contentType = "Application/Json; Charset = \"utf-8\"";
+
+        WebhookMessage message = CreateMessage(contentType: contentType);
+
+        Assert.Equal(MediaTypeHeaderValue.Parse(contentType).ToString(), message.ContentType);
     }
 
     [Fact]

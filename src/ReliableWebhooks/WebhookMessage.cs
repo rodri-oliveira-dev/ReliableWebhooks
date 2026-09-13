@@ -58,7 +58,7 @@ public sealed class WebhookMessage
         ArgumentException.ThrowIfNullOrWhiteSpace(contentType);
         ValidateNoControlCharacters(id, nameof(id));
         ValidateNoControlCharacters(eventType, nameof(eventType));
-        ValidateContentType(contentType);
+        string normalizedContentType = NormalizeContentType(contentType);
 
         if (!destination.IsAbsoluteUri || !IsHttpDestination(destination))
         {
@@ -69,7 +69,7 @@ public sealed class WebhookMessage
         EventType = eventType;
         Destination = destination;
         this.payload = payload.ToArray();
-        ContentType = contentType;
+        ContentType = normalizedContentType;
         Headers = CopyHeaders(headers);
     }
 
@@ -105,7 +105,7 @@ public sealed class WebhookMessage
     internal ReadOnlyMemory<byte> PayloadBuffer => payload;
 
     /// <summary>
-    /// Gets the payload content type.
+    /// Gets the payload content type serialized with the platform HTTP media-type parser.
     /// </summary>
     public string ContentType
     {
@@ -204,13 +204,15 @@ public sealed class WebhookMessage
         }
     }
 
-    private static void ValidateContentType(string contentType)
+    private static string NormalizeContentType(string contentType)
     {
-        if (!MediaTypeHeaderValue.TryParse(contentType, out _))
+        if (!MediaTypeHeaderValue.TryParse(contentType, out MediaTypeHeaderValue? parsed) || parsed is null)
         {
             throw new ArgumentException(
                 "Content type must be a valid HTTP media type.",
                 nameof(contentType));
         }
+
+        return parsed.ToString();
     }
 }

@@ -153,6 +153,43 @@ public sealed class WebhookSigningTests
     }
 
     [Fact]
+    public async Task TransportSignsSerializedContentTypeHeader()
+    {
+        byte[] payload = Encoding.UTF8.GetBytes("{\"id\":123}");
+        SigningRecordingHandler handler = new();
+        using HttpClient client = CreateClient(handler);
+        HmacSha256WebhookRequestSigner signer = new(
+            new TestSecretProvider(CreateStrongTestSecret()));
+        WebhookHttpTransport transport = new(
+            client,
+            classifier: null,
+            options: new WebhookHttpTransportOptions
+            {
+                Signing = new WebhookSigningOptions
+                {
+                    TimeProvider = new FixedTimeProvider(FixedTimestamp),
+                },
+            },
+            signer: signer);
+        WebhookMessage message = CreateMessage(
+            payload,
+            contentType: "Application/Json; Charset = \"utf-8\"");
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            message,
+            TestContext.Current.CancellationToken);
+        string expectedSignature = await signer.SignAsync(
+            message,
+            payload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(message.ContentType, handler.GetHeader("Content-Type"));
+        Assert.Equal(expectedSignature, handler.GetHeader("X-Webhook-Signature"));
+    }
+
+    [Fact]
     public async Task TransportSupportsCustomSigningHeaderNamesAndSigner()
     {
         SigningRecordingHandler handler = new();
@@ -370,6 +407,14 @@ public sealed class WebhookSigningTests
             foreach ((string name, IEnumerable<string> values) in request.Headers)
             {
                 headers[name] = string.Join(",", values);
+            }
+
+            if (request.Content is not null)
+            {
+                foreach ((string name, IEnumerable<string> values) in request.Content.Headers)
+                {
+                    headers[name] = string.Join(",", values);
+                }
             }
 
             return new HttpResponseMessage(HttpStatusCode.NoContent);
