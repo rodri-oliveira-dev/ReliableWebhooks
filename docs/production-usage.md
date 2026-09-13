@@ -469,7 +469,7 @@ Start with the defaults, then tune from observed latency and backlog rather than
 - Set `LeaseDuration` high enough for the backing store and network to renew comfortably; active attempts renew at half the lease duration, capped at 30 seconds.
 - Keep `AttemptTimeout` bounded unless another cancellation mechanism is guaranteed.
 - Increase `MaxConcurrency` only when the backing store, outbound network, and receivers can sustain it.
-- Keep event types to a bounded vocabulary because event type is used as a metric dimension.
+- Keep event types to a bounded vocabulary before opting into the event-type metric tag.
 - Configure retry delays to avoid synchronized retry storms across many workers.
 - Treat dead-lettered deliveries as operational work that needs monitoring and an explicit replay/remediation process.
 
