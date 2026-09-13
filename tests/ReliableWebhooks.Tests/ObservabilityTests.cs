@@ -63,8 +63,82 @@ public sealed class ObservabilityTests
         Assert.Single(
             telemetry.Measurements,
             measurement => measurement.InstrumentName == ReliableWebhooksInstrumentation.QueuedMetricName
-                && measurement.Tags.Any(
-                    tag => tag.Key == "webhook.event_type" && tag.Value?.ToString() == eventType));
+                && !measurement.Tags.Any(tag => tag.Key == "webhook.event_type"));
+    }
+
+    [Fact]
+    public async Task DefaultMetricsDoNotUseRawEventTypesAsDimensions()
+    {
+        RecordingLogger logger = new();
+        using TelemetryRecorder telemetry = new();
+        InstrumentedWebhookDeliveryStore store = new(
+            new InMemoryWebhookDeliveryStore(),
+            logger);
+
+        for (int i = 0; i < 25; i++)
+        {
+            WebhookMessage message = new(
+                $"observability-cardinality-{i}",
+                $"tenant.dynamic.{i}",
+                new Uri("https://example.test/webhooks"),
+                new byte[] { 1, 2, 3 },
+                "application/json");
+
+            _ = await store.EnqueueAsync(message, Now, TestContext.Current.CancellationToken);
+        }
+
+        Measurement[] queuedMeasurements = telemetry.Measurements
+            .Where(measurement => measurement.InstrumentName == ReliableWebhooksInstrumentation.QueuedMetricName)
+            .ToArray();
+
+        Assert.True(queuedMeasurements.Length >= 25);
+        Assert.DoesNotContain(
+            queuedMeasurements.SelectMany(measurement => measurement.Tags),
+            tag => tag.Key == "webhook.event_type");
+    }
+
+    [Fact]
+    public async Task MetricsUseConfiguredEventTypeAllowListAndBoundUnknownValues()
+    {
+        WebhookMetricsOptions metricsOptions = new()
+        {
+            EventTypeTagAllowList = new HashSet<string>(["observability.allowed"], StringComparer.Ordinal),
+        };
+        RecordingLogger logger = new();
+        using TelemetryRecorder telemetry = new();
+        InstrumentedWebhookDeliveryStore store = new(
+            new InMemoryWebhookDeliveryStore(),
+            logger,
+            metricsOptions);
+
+        foreach ((string id, string eventType) in new[]
+        {
+            ("observability-allowed", "observability.allowed"),
+            ("observability-unknown-1", "tenant.dynamic.1"),
+            ("observability-unknown-2", "tenant.dynamic.2"),
+        })
+        {
+            WebhookMessage message = new(
+                id,
+                eventType,
+                new Uri("https://example.test/webhooks"),
+                new byte[] { 1, 2, 3 },
+                "application/json");
+
+            _ = await store.EnqueueAsync(message, Now, TestContext.Current.CancellationToken);
+        }
+
+        string[] eventTypeTagValues = telemetry.Measurements
+            .Where(measurement => measurement.InstrumentName == ReliableWebhooksInstrumentation.QueuedMetricName)
+            .SelectMany(measurement => measurement.Tags)
+            .Where(tag => tag.Key == "webhook.event_type")
+            .Select(tag => tag.Value?.ToString() ?? string.Empty)
+            .ToArray();
+
+        Assert.Contains("observability.allowed", eventTypeTagValues);
+        Assert.Equal(2, eventTypeTagValues.Count(value => value == "other"));
+        Assert.DoesNotContain("tenant.dynamic.1", eventTypeTagValues);
+        Assert.DoesNotContain("tenant.dynamic.2", eventTypeTagValues);
     }
 
     [Fact]
@@ -96,10 +170,37 @@ public sealed class ObservabilityTests
         Assert.Contains(logger.Entries, entry => entry.EventId.Id == 1003 && entry.Properties["WebhookId"]?.ToString() == webhookId);
         Assert.Contains(logger.Entries, entry => entry.EventId.Id == 1004 && entry.Properties["WebhookId"]?.ToString() == webhookId);
 
-        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.QueuedMetricName, eventType);
-        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.AttemptedMetricName, eventType);
-        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.SucceededMetricName, eventType);
-        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.DeliveryDurationMetricName, eventType, "success");
+        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.QueuedMetricName);
+        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.AttemptedMetricName);
+        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.SucceededMetricName);
+        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.DeliveryDurationMetricName, eventTypeTagValue: null, "success");
+    }
+
+    [Fact]
+    public async Task DispatcherMetricsUseEventTypeAllowListFallback()
+    {
+        WebhookMetricsOptions metricsOptions = new()
+        {
+            EventTypeTagAllowList = new HashSet<string>(["observability.allowed"], StringComparer.Ordinal),
+        };
+        RecordingLogger logger = new();
+        using TelemetryRecorder telemetry = new();
+
+        await RunDeliveryAsync(
+            "observability-unknown-dispatcher",
+            "tenant.dynamic.dispatcher",
+            HttpStatusCode.NoContent,
+            logger,
+            retryPolicy: null,
+            metricsOptions: metricsOptions);
+
+        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.AttemptedMetricName, "other");
+        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.SucceededMetricName, "other");
+        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.DeliveryDurationMetricName, "other", "success");
+        Assert.DoesNotContain(
+            telemetry.Measurements.SelectMany(measurement => measurement.Tags),
+            tag => tag.Key == "webhook.event_type"
+                && string.Equals(tag.Value?.ToString(), "tenant.dynamic.dispatcher", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -132,8 +233,12 @@ public sealed class ObservabilityTests
             item => GetTag(item, "webhook.id") == webhookId);
         Assert.Equal(expectedOutcome, GetTag(activity, "webhook.outcome"));
         Assert.Equal(ActivityStatusCode.Error, activity.Status);
-        AssertMeasurement(telemetry, expectedMetric, eventType);
-        AssertMeasurement(telemetry, ReliableWebhooksInstrumentation.DeliveryDurationMetricName, eventType, expectedOutcome);
+        AssertMeasurement(telemetry, expectedMetric);
+        AssertMeasurement(
+            telemetry,
+            ReliableWebhooksInstrumentation.DeliveryDurationMetricName,
+            eventTypeTagValue: null,
+            expectedOutcome);
     }
 
     [Fact]
@@ -193,11 +298,14 @@ public sealed class ObservabilityTests
         IWebhookRetryPolicy? retryPolicy,
         byte[]? payload = null,
         Uri? destination = null,
-        IReadOnlyDictionary<string, string>? headers = null)
+        IReadOnlyDictionary<string, string>? headers = null,
+        WebhookMetricsOptions? metricsOptions = null)
     {
+        WebhookMetricsOptions effectiveMetricsOptions = metricsOptions ?? new WebhookMetricsOptions();
         InstrumentedWebhookDeliveryStore store = new(
             new InMemoryWebhookDeliveryStore(),
-            logger);
+            logger,
+            effectiveMetricsOptions);
         WebhookMessage message = new(
             webhookId,
             eventType,
@@ -225,6 +333,7 @@ public sealed class ObservabilityTests
                 PollInterval = TimeSpan.FromSeconds(5),
                 ShutdownGracePeriod = TimeSpan.FromSeconds(30),
                 TimeProvider = new FixedTimeProvider(Now),
+                Metrics = effectiveMetricsOptions,
             },
             delay,
             logger);
@@ -238,15 +347,26 @@ public sealed class ObservabilityTests
     private static void AssertMeasurement(
         TelemetryRecorder telemetry,
         string instrumentName,
-        string eventType,
+        string? eventTypeTagValue = null,
         string? outcome = null)
     {
         Assert.Contains(
             telemetry.Measurements,
             measurement => measurement.InstrumentName == instrumentName
-                && measurement.Tags.Any(tag => tag.Key == "webhook.event_type" && tag.Value?.ToString() == eventType)
+                && HasExpectedEventTypeTag(measurement, eventTypeTagValue)
                 && (outcome is null
                     || measurement.Tags.Any(tag => tag.Key == "webhook.outcome" && tag.Value?.ToString() == outcome)));
+    }
+
+    private static bool HasExpectedEventTypeTag(
+        Measurement measurement,
+        string? eventTypeTagValue)
+    {
+        return eventTypeTagValue is null
+            ? !measurement.Tags.Any(tag => tag.Key == "webhook.event_type")
+            : measurement.Tags.Any(
+                tag => tag.Key == "webhook.event_type"
+                    && tag.Value?.ToString() == eventTypeTagValue);
     }
 
     private static string? GetTag(Activity activity, string name)

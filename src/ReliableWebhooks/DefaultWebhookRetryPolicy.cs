@@ -94,11 +94,6 @@ public sealed class DefaultWebhookRetryPolicy : IWebhookRetryPolicy
         TimeSpan retryAfterDelay = CalculateRetryAfterDelay(context);
         TimeSpan effectiveDelay = localDelay >= retryAfterDelay ? localDelay : retryAfterDelay;
 
-        if (effectiveDelay > maxDelay)
-        {
-            effectiveDelay = maxDelay;
-        }
-
         DateTimeOffset nextAttemptAt = AddDelay(context.Now, effectiveDelay);
         return new WebhookRetryDecision(WebhookRetryAction.Retry, nextAttemptAt);
     }

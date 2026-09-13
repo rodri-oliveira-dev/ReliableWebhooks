@@ -37,7 +37,8 @@ using Microsoft.Extensions.DependencyInjection;
 using ReliableWebhooks;
 
 ServiceCollection services = new();
-services.AddSingleton<IWebhookDeliveryStore, CustomStore>();
+services.AddSingleton<SharedStore>();
+services.AddScoped<IWebhookDeliveryStore, CustomStore>();
 services.AddReliableWebhooks();
 
 using ServiceProvider provider = services.BuildServiceProvider(new ServiceProviderOptions
@@ -46,44 +47,58 @@ using ServiceProvider provider = services.BuildServiceProvider(new ServiceProvid
     ValidateScopes = true,
 });
 
-if (provider.GetRequiredService<IWebhookDeliveryStore>() is not CustomStore)
+using (IServiceScope scope = provider.CreateScope())
 {
-    throw new InvalidOperationException("Custom IWebhookDeliveryStore registration was not preserved.");
+    if (scope.ServiceProvider.GetRequiredService<IWebhookDeliveryStore>() is not CustomStore)
+    {
+        throw new InvalidOperationException("Custom scoped IWebhookDeliveryStore registration was not preserved.");
+    }
 }
 
-_ = provider.GetRequiredService<IWebhookEnqueueService>();
+IWebhookEnqueueService enqueue = provider.GetRequiredService<IWebhookEnqueueService>();
 _ = provider.GetRequiredService<WebhookDispatcher>();
-Console.WriteLine("ReliableWebhooks custom-store consumer resolved successfully.");
+_ = await enqueue.EnqueueAsync(new WebhookMessage(
+    "consumer-scoped-store",
+    "consumer.created",
+    new Uri("https://example.test/webhooks"),
+    "{}"u8.ToArray(),
+    "application/json"));
+Console.WriteLine("ReliableWebhooks scoped custom-store consumer resolved successfully.");
 
 file sealed class CustomStore : IWebhookDeliveryStore
 {
-    private readonly InMemoryWebhookDeliveryStore inner = new();
+    private readonly SharedStore shared;
+
+    public CustomStore(SharedStore shared)
+    {
+        this.shared = shared;
+    }
 
     public Task<WebhookEnqueueResult> EnqueueAsync(
         WebhookMessage message,
         DateTimeOffset nextAttemptAt,
         CancellationToken cancellationToken = default) =>
-        inner.EnqueueAsync(message, nextAttemptAt, cancellationToken);
+        shared.Inner.EnqueueAsync(message, nextAttemptAt, cancellationToken);
 
     public Task<IReadOnlyList<WebhookDeliveryLease>> ClaimDueAsync(
         DateTimeOffset now,
         TimeSpan leaseDuration,
         int maxCount,
         CancellationToken cancellationToken = default) =>
-        inner.ClaimDueAsync(now, leaseDuration, maxCount, cancellationToken);
+        shared.Inner.ClaimDueAsync(now, leaseDuration, maxCount, cancellationToken);
 
     public Task<WebhookDeliveryLease> RenewLeaseAsync(
         WebhookDeliveryLease lease,
         DateTimeOffset now,
         TimeSpan leaseDuration,
         CancellationToken cancellationToken = default) =>
-        inner.RenewLeaseAsync(lease, now, leaseDuration, cancellationToken);
+        shared.Inner.RenewLeaseAsync(lease, now, leaseDuration, cancellationToken);
 
     public Task MarkSucceededAsync(
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
         CancellationToken cancellationToken = default) =>
-        inner.MarkSucceededAsync(lease, completedAt, cancellationToken);
+        shared.Inner.MarkSucceededAsync(lease, completedAt, cancellationToken);
 
     public Task ScheduleRetryAsync(
         WebhookDeliveryLease lease,
@@ -91,26 +106,31 @@ file sealed class CustomStore : IWebhookDeliveryStore
         DateTimeOffset nextAttemptAt,
         string? lastError,
         CancellationToken cancellationToken = default) =>
-        inner.ScheduleRetryAsync(lease, completedAt, nextAttemptAt, lastError, cancellationToken);
+        shared.Inner.ScheduleRetryAsync(lease, completedAt, nextAttemptAt, lastError, cancellationToken);
 
     public Task MarkPermanentlyFailedAsync(
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
         string? lastError,
         CancellationToken cancellationToken = default) =>
-        inner.MarkPermanentlyFailedAsync(lease, completedAt, lastError, cancellationToken);
+        shared.Inner.MarkPermanentlyFailedAsync(lease, completedAt, lastError, cancellationToken);
 
     public Task DeadLetterAsync(
         WebhookDeliveryLease lease,
         DateTimeOffset completedAt,
         string? lastError,
         CancellationToken cancellationToken = default) =>
-        inner.DeadLetterAsync(lease, completedAt, lastError, cancellationToken);
+        shared.Inner.DeadLetterAsync(lease, completedAt, lastError, cancellationToken);
 
     public Task<WebhookDeliverySnapshot?> GetAsync(
         string webhookId,
         CancellationToken cancellationToken = default) =>
-        inner.GetAsync(webhookId, cancellationToken);
+        shared.Inner.GetAsync(webhookId, cancellationToken);
+}
+
+file sealed class SharedStore
+{
+    public InMemoryWebhookDeliveryStore Inner { get; } = new();
 }
 EOF
 

@@ -14,7 +14,7 @@ public sealed class WebhookSigningTests
     {
         byte[] payload = Encoding.UTF8.GetBytes("{\"id\":123}");
         HmacSha256WebhookRequestSigner signer = new(
-            new TestSecretProvider(Encoding.UTF8.GetBytes("whsec_test_secret")));
+            new TestSecretProvider(CreateStrongTestSecret()));
 
         string signature = await signer.SignAsync(
             CreateMessage(payload),
@@ -23,15 +23,53 @@ public sealed class WebhookSigningTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(
-            "v1=3b2bd7a533a3752d16ec9d722ba635dca7a04012c61e46c96892b41efb0a353b",
+            "v1=7d07a2e15140fdd6dd402c285ce17cbdeea8722821988c15953386a6fb524950",
             signature);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    public async Task HmacSignerRejectsSecretsBelowMinimumLength(int length)
+    {
+        byte[] payload = Encoding.UTF8.GetBytes("{\"id\":123}");
+        byte[] secret = Enumerable.Range(0, length).Select(static value => (byte)value).ToArray();
+        HmacSha256WebhookRequestSigner signer = new(new TestSecretProvider(secret));
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await signer.SignAsync(
+                CreateMessage(payload),
+                payload,
+                FixedTimestamp,
+                TestContext.Current.CancellationToken));
+
+        Assert.Contains("at least 32 bytes (256 bits)", exception.Message, StringComparison.Ordinal);
+        if (secret.Length > 0)
+        {
+            Assert.DoesNotContain(Convert.ToHexStringLower(secret), exception.ToString(), StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
-    public async Task HmacSignerChangesWhenPayloadOrTimestampChanges()
+    public async Task HmacSignerAcceptsMinimumLengthSecret()
+    {
+        byte[] payload = Encoding.UTF8.GetBytes("{\"id\":123}");
+        HmacSha256WebhookRequestSigner signer = new(new TestSecretProvider(CreateStrongTestSecret()));
+
+        string signature = await signer.SignAsync(
+            CreateMessage(payload),
+            payload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("v1=", signature, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HmacSignerChangesWhenSignedEnvelopeChanges()
     {
         HmacSha256WebhookRequestSigner signer = new(
-            new TestSecretProvider(Encoding.UTF8.GetBytes("whsec_test_secret")));
+            new TestSecretProvider(CreateStrongTestSecret()));
         byte[] originalPayload = Encoding.UTF8.GetBytes("{\"id\":123}");
         byte[] mutatedPayload = Encoding.UTF8.GetBytes("{\"id\":124}");
         WebhookMessage message = CreateMessage(originalPayload);
@@ -51,9 +89,27 @@ public sealed class WebhookSigningTests
             originalPayload,
             FixedTimestamp.AddSeconds(1),
             TestContext.Current.CancellationToken);
+        string idMutation = await signer.SignAsync(
+            CreateMessage(originalPayload, id: "webhook-456"),
+            originalPayload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
+        string eventTypeMutation = await signer.SignAsync(
+            CreateMessage(originalPayload, eventType: "order.updated"),
+            originalPayload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
+        string contentTypeMutation = await signer.SignAsync(
+            CreateMessage(originalPayload, contentType: "application/vnd.example+json"),
+            originalPayload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
 
         Assert.NotEqual(original, payloadMutation);
         Assert.NotEqual(original, timestampMutation);
+        Assert.NotEqual(original, idMutation);
+        Assert.NotEqual(original, eventTypeMutation);
+        Assert.NotEqual(original, contentTypeMutation);
     }
 
     [Fact]
@@ -63,7 +119,7 @@ public sealed class WebhookSigningTests
         SigningRecordingHandler handler = new();
         using HttpClient client = CreateClient(handler);
         HmacSha256WebhookRequestSigner signer = new(
-            new TestSecretProvider(Encoding.UTF8.GetBytes("whsec_test_secret")));
+            new TestSecretProvider(CreateStrongTestSecret()));
         WebhookHttpTransport transport = new(
             client,
             classifier: null,
@@ -77,7 +133,7 @@ public sealed class WebhookSigningTests
             signer: signer);
         WebhookMessage message = CreateMessage(
             payload,
-            new Dictionary<string, string>
+            headers: new Dictionary<string, string>
             {
                 ["X-Webhook-Signature"] = "untrusted-value",
             });
@@ -92,8 +148,45 @@ public sealed class WebhookSigningTests
         Assert.Equal("order.created", handler.GetHeader("X-Webhook-Event"));
         Assert.Equal("1767323045", handler.GetHeader("X-Webhook-Timestamp"));
         Assert.Equal(
-            "v1=3b2bd7a533a3752d16ec9d722ba635dca7a04012c61e46c96892b41efb0a353b",
+            "v1=7d07a2e15140fdd6dd402c285ce17cbdeea8722821988c15953386a6fb524950",
             handler.GetHeader("X-Webhook-Signature"));
+    }
+
+    [Fact]
+    public async Task TransportSignsSerializedContentTypeHeader()
+    {
+        byte[] payload = Encoding.UTF8.GetBytes("{\"id\":123}");
+        SigningRecordingHandler handler = new();
+        using HttpClient client = CreateClient(handler);
+        HmacSha256WebhookRequestSigner signer = new(
+            new TestSecretProvider(CreateStrongTestSecret()));
+        WebhookHttpTransport transport = new(
+            client,
+            classifier: null,
+            options: new WebhookHttpTransportOptions
+            {
+                Signing = new WebhookSigningOptions
+                {
+                    TimeProvider = new FixedTimeProvider(FixedTimestamp),
+                },
+            },
+            signer: signer);
+        WebhookMessage message = CreateMessage(
+            payload,
+            contentType: "Application/Json; Charset = \"utf-8\"");
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            message,
+            TestContext.Current.CancellationToken);
+        string expectedSignature = await signer.SignAsync(
+            message,
+            payload,
+            FixedTimestamp,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(message.ContentType, handler.GetHeader("Content-Type"));
+        Assert.Equal(expectedSignature, handler.GetHeader("X-Webhook-Signature"));
     }
 
     [Fact]
@@ -165,7 +258,7 @@ public sealed class WebhookSigningTests
     [Fact]
     public async Task SigningFailuresProducedByLibraryDoNotExposeSecret()
     {
-        const string secretText = "do-not-expose-this-secret";
+        const string secretText = "do-not-expose-this-strong-secret-material";
         using HttpClient client = CreateClient(new SigningRecordingHandler());
         HmacSha256WebhookRequestSigner signer = new(
             new TestSecretProvider(Encoding.UTF8.GetBytes(secretText)));
@@ -198,16 +291,24 @@ public sealed class WebhookSigningTests
         };
     }
 
+    private static byte[] CreateStrongTestSecret()
+    {
+        return Enumerable.Range(0, 32).Select(static value => (byte)value).ToArray();
+    }
+
     private static WebhookMessage CreateMessage(
         ReadOnlyMemory<byte> payload,
+        string id = "webhook-123",
+        string eventType = "order.created",
+        string contentType = "application/json",
         IReadOnlyDictionary<string, string>? headers = null)
     {
         return new WebhookMessage(
-            "webhook-123",
-            "order.created",
+            id,
+            eventType,
             new Uri("https://example.test/webhooks"),
             payload,
-            "application/json",
+            contentType,
             headers);
     }
 
@@ -306,6 +407,14 @@ public sealed class WebhookSigningTests
             foreach ((string name, IEnumerable<string> values) in request.Headers)
             {
                 headers[name] = string.Join(",", values);
+            }
+
+            if (request.Content is not null)
+            {
+                foreach ((string name, IEnumerable<string> values) in request.Content.Headers)
+                {
+                    headers[name] = string.Join(",", values);
+                }
             }
 
             return new HttpResponseMessage(HttpStatusCode.NoContent);

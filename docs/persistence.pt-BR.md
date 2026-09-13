@@ -25,6 +25,10 @@ Uma implementação durável deve preservar informação suficiente para retomar
 
 `InMemoryWebhookDeliveryStore` implementa o protocolo comportamental, mas é local ao processo e perde todo o estado quando o processo termina. Deve ser usado apenas em testes, exemplos e cenários locais.
 
+URIs de destino, bytes de payload, content types, headers customizados e texto de erro armazenado são dados de entrega potencialmente sensíveis. Stores de produção devem proteger esses campos com controles de armazenamento compatíveis com a classificação de dados da aplicação, incluindo criptografia em repouso, acesso de banco com menor privilégio, backups/snapshots protegidos, acesso administrativo auditado e políticas de retenção/exclusão para registros terminais e dead-letter. Não dependa apenas de logs ou métricas do ReliableWebhooks como proteção; um store durável e seus backups podem reter esses valores por mais tempo que o processo em execução.
+
+Não persista credenciais de requisição casualmente em `WebhookMessage.Headers`. O contrato padrão da mensagem rejeita `Authorization` e `Cookie` para que aplicações resolvam esses valores no momento do envio por meio de `IWebhookRequestHeaderProvider`. `Proxy-Authorization` é reservado pelo transporte padrão e deve ser configurado no proxy/handler HTTP controlado pela aplicação, se necessário. Um provider no momento do envio permite que rotações afetem tentativas futuras já enfileiradas sem regravar todas as entregas persistidas. Se o path ou query string de uma URL de destino funciona como credencial bearer, prefira uma indireção controlada pela aplicação, como um identificador de recebedor mais lookup de destino/credencial no envio, ou aplique proteção de campo/tokenização no store e no pipeline de backup.
+
 ## Enqueue idempotente
 
 `EnqueueAsync` usa `WebhookMessage.Id` como chave estável de idempotência.
@@ -50,9 +54,21 @@ Workers concorrentes nunca podem receber ao mesmo tempo leases válidos para a m
 
 O mecanismo concreto de atomicidade é responsabilidade do adapter. Transações, updates condicionais, concorrência otimista, tokens de versão, compare-and-set ou primitivas específicas do armazenamento são abordagens válidas.
 
+## Relógio autoritativo
+
+Decisões de claim, renovação e expiração de lease devem usar um único relógio autoritativo para o limite de coordenação do store. `InMemoryWebhookDeliveryStore` e testes determinísticos usam o valor `now` fornecido pelo chamador como essa autoridade porque todos os workers estão no mesmo processo.
+
+Stores duráveis distribuídos devem preferir o tempo do backend/store, como um timestamp do servidor de banco ou outro relógio compartilhado de coordenação, ao decidir se um item está vencido ou se um lease expirou. Se um adapter depender do tempo fornecido por workers, ele precisa definir e impor uma regra de skew/tolerância máxima forte o bastante para impedir que dois workers com relógios diferentes possuam a mesma entrega ao mesmo tempo.
+
+Agendamento de retry e timestamps terminais podem usar o tempo de operação fornecido pelo dispatcher, mas um store nunca deve permitir que o relógio local adiantado de um worker expire prematuramente o lease ativo de outro worker fora do modelo autoritativo documentado.
+
 ## Renovação de lease e propriedade obsoleta
 
-`RenewLeaseAsync` deve preservar o mesmo token, não pode incrementar `AttemptCount` e não pode encurtar um lease ainda válido.
+`WebhookDispatcher` renova um lease de entrega em andamento enquanto a tentativa de transporte ainda está executando. A cadência de renovação é metade de `Dispatcher.LeaseDuration`, limitada a um intervalo máximo de 30 segundos, para que a renovação aconteça com margem de segurança em vez de esperar a fronteira exata de expiração.
+
+`RenewLeaseAsync` deve preservar o mesmo token, não pode incrementar `AttemptCount` e não pode encurtar um lease ainda válido. O `WebhookDeliveryLease` retornado deve refletir a expiração persistida atual para que o chamador use o snapshot de propriedade mais recente na transição final de estado.
+
+Se a renovação falhar porque a propriedade está obsoleta, substituída, expirada ou inválida, o dispatcher cancela a tentativa em andamento quando possível e não persiste sucesso, retry, falha permanente ou dead letter para esse proprietário obsoleto.
 
 Toda operação de alteração de estado que recebe um `WebhookDeliveryLease` deve verificar que:
 
@@ -115,7 +131,9 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks();
 webhooks.AddHostedDispatcher();
 ```
 
-O lifetime escolhido deve respeitar os requisitos de thread safety e gerenciamento de recursos do adapter. O contrato principal do ReliableWebhooks não exige um lifetime específico de DI.
+O lifetime escolhido deve respeitar os requisitos de thread safety e gerenciamento de recursos do adapter. A integração de DI do ReliableWebhooks aceita registros singleton, scoped e transient de `IWebhookDeliveryStore`. Serviços singleton criados pela DI, como `IWebhookEnqueueService`, `WebhookDispatcher` e o hosted dispatcher, não capturam o store a partir do provider raiz; eles resolvem o store dentro de um escopo curto de operação para cada chamada ao store.
+
+Adapters scoped e transient ainda precisam coordenar por meio de um estado durável/compartilhado. Uma instância scoped pode encapsular uma sessão de banco, unidade de trabalho ou client scoped, mas escopos independentes de operação precisam observar as mesmas entregas persistidas, leases e tokens de concorrência.
 
 ## Garantias de entrega
 

@@ -8,7 +8,7 @@ For a runnable local example, see [`samples/ReliableWebhooks.Sample`](../samples
 
 ReliableWebhooks is designed for **at-least-once delivery**, not exactly-once delivery. A delivery can reach the receiver more than once when a worker sends the HTTP request successfully but fails before persisting the successful transition, or when a lease expires while ownership is uncertain.
 
-Receivers must therefore be idempotent. Prefer a stable application identifier carried inside the signed payload. The default `X-Webhook-Id` header is useful for correlation, but it is not part of the default HMAC canonical bytes; if a receiver uses that header as its idempotency key, it should first verify the signature and cross-check the header against an identifier inside the signed payload.
+Receivers must therefore be idempotent. Prefer a stable application identifier carried inside the signed payload. The default HMAC envelope authenticates the generated webhook ID header, but applications should still decide whether that delivery ID or a domain identifier inside the signed payload is the correct idempotency key for their receiver.
 
 At-least-once behavior across application restarts additionally requires a conforming **durable** `IWebhookDeliveryStore`. `InMemoryWebhookDeliveryStore` is process-local and exists only for tests, samples, and local experimentation.
 
@@ -34,6 +34,13 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
         JitterFactor = 0.2,
     };
 
+    options.MessageLimits = new WebhookMessageLimits
+    {
+        MaxPayloadBytes = 1024 * 1024,
+        MaxCustomHeaders = 32,
+        MaxCustomHeaderBytes = 16 * 1024,
+    };
+
     options.Transport = new WebhookHttpTransportOptions
     {
         AttemptTimeout = TimeSpan.FromSeconds(30),
@@ -45,6 +52,8 @@ webhooks.AddHostedDispatcher();
 ```
 
 `AddHostedDispatcher()` is optional. When enabled, the Generic Host starts and stops the dispatcher with the application. Without it, the application can resolve `WebhookDispatcher` and control its lifetime directly.
+
+`IWebhookDeliveryStore` may be registered as singleton, scoped, or transient. The DI integration resolves the store inside a short-lived operation scope for each enqueue, claim, renewal, or state-transition call, so singleton ReliableWebhooks services do not capture scoped adapters from the root provider. Scoped and transient adapters must coordinate through shared durable state; do not register a per-scope in-memory store and expect different operation scopes to see the same queue.
 
 The core package does not require Entity Framework Core, Dapper, ADO.NET, Redis, files, a relational database, or a document database. Any implementation technology is valid when its `IWebhookDeliveryStore` behavior satisfies the contract.
 
@@ -64,6 +73,20 @@ WebhookMessage message = new(
 
 await webhookEnqueueService.EnqueueAsync(message, cancellationToken);
 ```
+
+The standard `IWebhookEnqueueService` validates `ReliableWebhooksOptions.MessageLimits` before it calls the configured store, so oversized messages fail deterministically before durable persistence and are not treated as transient transport failures. Defaults are intentionally bounded for ordinary webhook workloads:
+
+- payload: 1 MiB;
+- custom headers: 32 entries;
+- aggregate custom header name/value bytes: 16 KiB using UTF-8 byte counts;
+- stable webhook ID: 128 characters;
+- event type: 128 characters;
+- content type: 256 characters;
+- destination URI: 2048 characters.
+
+Increase these limits only when the application contract requires larger messages, and combine them with tenant/application quotas, request-body limits, and payload-shape validation at the point where users or tenants submit webhook work. These limits protect each message that enters ReliableWebhooks; they do not replace broader capacity planning for the queue, persistence backend, or outbound network.
+
+Direct calls to `IWebhookDeliveryStore.EnqueueAsync` are a lower-level persistence-port operation. They intentionally remain available for custom orchestration, tests, and advanced adapters, but they bypass the DI enqueue-service guard unless the caller explicitly runs `WebhookMessageLimits.Validate(message)` or enforces an equivalent policy before the store write.
 
 The ID must be stable for the logical webhook. Enqueueing the same ID again is idempotent and must return the existing delivery rather than create a second record.
 
@@ -196,7 +219,7 @@ The default classifier treats:
 - `408`, `425`, `429`, and `5xx` as retryable;
 - other HTTP statuses, including redirects, as permanent failures.
 
-The default retry policy calculates a future `NextAttemptAt` using capped exponential backoff plus positive jitter. A valid `Retry-After` can delay the next attempt further, subject to `MaxDelay`. When `MaxAttempts` is reached, a retryable failure becomes `DeadLettered`.
+The default retry policy calculates a future `NextAttemptAt` using capped exponential backoff plus positive jitter. `MaxDelay` caps only the locally generated backoff/jitter delay. A valid positive `Retry-After` delta or future HTTP-date can delay the next attempt beyond `MaxDelay` and is not shortened by the default policy. When `MaxAttempts` is reached, a retryable failure becomes `DeadLettered`.
 
 Permanent failures transition directly to `PermanentlyFailed` and are not retried automatically.
 
@@ -205,6 +228,10 @@ Permanent failures transition directly to `PermanentlyFailed` and are not retrie
 `MaxConcurrency` bounds the number of deliveries processed simultaneously. The dispatcher only claims enough records to fill currently available capacity.
 
 A claim creates a lease. The lease token is proof of active ownership. State transitions must succeed only for the current, unexpired token. If a worker loses ownership because the lease expires and another worker reclaims the record, the stale worker must not overwrite the new owner's state.
+
+While a delivery attempt is running, `WebhookDispatcher` renews the active lease every half `LeaseDuration`, capped at a 30-second renewal interval. Renewal keeps the same lease token and does not increment the attempt count. If renewal loses ownership or fails, the dispatcher cancels the in-flight attempt when possible and leaves the delivery for the current owner or future recovery instead of persisting a stale outcome.
+
+For distributed durable stores, lease eligibility and renewal must be evaluated with one authoritative clock at the store/coordination boundary. Prefer backend/store time over individual worker clocks. If an adapter accepts worker-provided time, document and enforce a bounded-skew rule so a fast worker cannot prematurely reclaim another worker's active lease.
 
 Shutdown is two-phase:
 
@@ -222,22 +249,66 @@ services.AddSingleton<IWebhookSigningSecretProvider, MySigningSecretProvider>();
 services.AddSingleton<IWebhookRequestSigner, HmacSha256WebhookRequestSigner>();
 ```
 
-Secrets should come from a secret manager or another protected application source. Do not put shared secrets in logs, metrics, traces, source control, or exception messages.
+Secrets should come from a secret manager or another protected application source. The built-in HMAC-SHA256 signer requires at least 32 bytes (256 bits) of cryptographically generated key material and rejects empty or shorter secrets before signing. Generate those bytes with a CSPRNG, store them as secret material, and do not use passwords, passphrases, tenant names, or other low-entropy strings as HMAC secrets. Do not put shared secrets in logs, metrics, traces, source control, or exception messages.
+
+Plan rotation in the application-owned secret provider and receiver configuration. During a rotation window, receivers commonly accept the current and immediately previous secret while senders switch to the new one. Use different secrets for distinct trust audiences or receivers so a compromise in one integration cannot forge deliveries for another.
 
 With default signing options, requests contain:
 
 - `X-Webhook-Id`;
 - `X-Webhook-Event`;
+- `Content-Type`;
 - `X-Webhook-Timestamp`;
 - `X-Webhook-Signature` in the form `v1=<lowercase hex digest>`.
 
-The signed bytes are exactly:
+The built-in `v1` signed envelope is:
 
 ```text
-UTF8(unixTimestampSeconds + ".") || rawRequestBodyBytes
+ASCII("rw-hmac-sha256/v1\0")
+|| frame(UTF8(unixTimestampSeconds))
+|| frame(UTF8(webhookId))
+|| frame(UTF8(eventType))
+|| frame(UTF8(contentType))
+|| frame(rawRequestBodyBytes)
 ```
 
-`X-Webhook-Id` and `X-Webhook-Event` are delivery metadata but are **not included in those canonical HMAC bytes**. If a receiver relies on either value for authorization, idempotency, or routing, put the authoritative value in the signed payload as well and compare the header with that signed value after signature verification. The runnable sample demonstrates this cross-check for the webhook ID.
+Each `frame(value)` is an eight-byte big-endian length followed by the exact value bytes. The authenticated values are the timestamp, stable webhook ID, event type, normalized content type, and exact body bytes. `WebhookMessage` normalizes the content type with the platform HTTP media-type parser before persistence/signing so receivers should verify the serialized `Content-Type` header value they receive. Custom headers, destination URI, and the configurable signing header names are outside the built-in HMAC envelope. If receivers authorize or route by custom headers or destination-specific context, bind those values in the application payload or use a custom signer.
+
+Custom headers are validated before a `WebhookMessage` can be enqueued or persisted. Header names must use HTTP token syntax, duplicate names are rejected case-insensitively, values cannot be null, and values cannot contain control characters such as CR, LF, or NUL. Syntax validation is separate from the reserved-header policy: the default transport owns routing, authority, and HTTP framing fields, so message data cannot supply `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, or `Proxy-Connection`. This protects destination and SSRF decisions from HTTP authority manipulation and avoids handler-dependent framing semantics. Sensitive credential headers such as `Authorization` and `Cookie` are also rejected from `WebhookMessage.Headers`; resolve them at send time with `IWebhookRequestHeaderProvider` so they are not copied into durable delivery records and queued attempts can observe rotation. `Proxy-Authorization` remains unsupported by the default delivery-message model; configure proxy credentials on the application-owned HTTP handler/proxy instead. The HTTP transport applies allowed custom headers through normal validated `HttpHeaders` APIs and supports both request headers and content headers such as `Content-Language`. Applications that let tenants or subscribers configure custom headers remain responsible for deciding which allowed header names make sense for their domain and for treating header values as sensitive data. Advanced users who truly need low-level HTTP control should provide a custom `IWebhookDeliveryTransport` rather than weakening the safe default transport.
+
+For outbound credentials, register a provider instead of embedding secrets in the persisted message:
+
+```csharp
+services.AddSingleton<IWebhookRequestHeaderProvider, MyWebhookCredentialHeaders>();
+
+internal sealed class MyWebhookCredentialHeaders : IWebhookRequestHeaderProvider
+{
+    private readonly IApplicationSecretManager secretManager;
+
+    public MyWebhookCredentialHeaders(IApplicationSecretManager secretManager)
+    {
+        this.secretManager = secretManager;
+    }
+
+    public async ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
+        WebhookMessage message,
+        CancellationToken cancellationToken = default)
+    {
+        string token = await secretManager.GetReceiverTokenAsync(
+            message.Destination.Host,
+            cancellationToken);
+
+        return new Dictionary<string, string>
+        {
+            ["Authorization"] = $"Bearer {token}",
+        };
+    }
+}
+```
+
+If the provider cannot resolve credentials, the failure is scoped to that delivery attempt and moves through the normal retry/dead-letter policy. Exception messages, logs, traces, and persisted `LastError` values must not include credential values.
+
+Built-in message metadata is validated at the same boundary. `WebhookMessage.Id` and `WebhookMessage.EventType` must be non-empty and cannot contain control characters because they are emitted as generated signing headers and safe structured telemetry fields. `WebhookMessage.ContentType` must parse as an HTTP media type before the message can be persisted.
 
 ### Receiver-side verification
 
@@ -246,6 +317,9 @@ Verify the raw request body before parsing or reserializing it. A receiver shoul
 ```csharp
 static bool Verify(
     string timestampText,
+    string webhookId,
+    string eventType,
+    string contentType,
     string signatureText,
     ReadOnlySpan<byte> body,
     ReadOnlySpan<byte> sharedSecret)
@@ -266,14 +340,16 @@ static bool Verify(
     }
 
     byte[] key = sharedSecret.ToArray();
-    byte[] prefix = Encoding.UTF8.GetBytes(timestampText + ".");
-
     try
     {
         using IncrementalHash hmac =
             IncrementalHash.CreateHMAC(HashAlgorithmName.SHA256, key);
-        hmac.AppendData(prefix);
-        hmac.AppendData(body);
+        hmac.AppendData("rw-hmac-sha256/v1\0"u8);
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(timestampText));
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(webhookId));
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(eventType));
+        AppendFrame(hmac, Encoding.UTF8.GetBytes(contentType));
+        AppendFrame(hmac, body);
         byte[] expectedDigest = hmac.GetHashAndReset();
 
         return expectedDigest.Length == suppliedDigest.Length
@@ -284,18 +360,26 @@ static bool Verify(
         CryptographicOperations.ZeroMemory(key);
     }
 }
+
+static void AppendFrame(IncrementalHash hmac, ReadOnlySpan<byte> value)
+{
+    Span<byte> length = stackalloc byte[sizeof(long)];
+    BinaryPrimitives.WriteInt64BigEndian(length, value.Length);
+    hmac.AppendData(length);
+    hmac.AppendData(value);
+}
 ```
 
-The runnable sample includes timestamp parsing and replay-window validation around this same calculation.
+The runnable sample includes timestamp parsing and replay-window validation around this same calculation, then compares the authenticated generated metadata with application payload fields before routing the delivery.
 
 ## Receiver idempotency
 
-Signature verification authenticates the timestamp and raw body bytes; it does not make receiver processing idempotent and does not authenticate metadata headers that are outside the canonical bytes.
+Signature verification authenticates the timestamp, generated webhook ID, generated event type, normalized content type, and raw body bytes; it does not make receiver processing idempotent and does not authenticate custom headers, destination URI, or other metadata outside the canonical bytes.
 
 A typical receiver should:
 
 1. validate the signature and replay window against the raw body;
-2. read a stable webhook ID from the authenticated payload, or cross-check a metadata header against the signed payload before trusting it;
+2. choose a stable idempotency key from authenticated data, usually either the signed generated webhook ID or a domain identifier inside the signed payload;
 3. atomically check that stable ID in its own idempotency store;
 4. if already completed, return the same successful response without repeating side effects;
 5. otherwise perform the business operation and persist the completed webhook ID in the same transaction whenever possible;
@@ -316,7 +400,7 @@ ReliableWebhooksInstrumentation.MeterName          // ReliableWebhooks
 
 The library emits structured logs for enqueue, claim, attempt, success, retry, permanent failure, dead letter, cancellation, lease loss, and unexpected failures. `InstrumentedWebhookDeliveryStore` adds enqueue logging and the queued metric around any store implementation.
 
-Do not add payloads, signatures, secrets, full destination URLs, customer IDs, or other high-cardinality/sensitive values to metrics. The built-in metric dimensions intentionally remain bounded.
+Built-in metrics omit raw event-type dimensions by default. `WebhookMetricsOptions.EventTypeTagAllowList` can opt into the `webhook.event_type` tag for a bounded vocabulary; unapproved event types use `UnknownEventTypeTagValue`, which defaults to `other`. For dispatcher metrics, configure `Dispatcher.Metrics`. For enqueue metrics emitted by `InstrumentedWebhookDeliveryStore`, pass the same `WebhookMetricsOptions` to the instrumented-store constructor. Do not add payloads, signatures, secrets, full destination URLs, customer IDs, webhook IDs, or other high-cardinality/sensitive values to metrics.
 
 OpenTelemetry consumers can register the activity source and meter in their own application pipeline without adding an OpenTelemetry dependency to ReliableWebhooks itself.
 
@@ -328,29 +412,68 @@ OpenTelemetry consumers can register the activity source and meter in their own 
 | `Dispatcher.LeaseDuration` | `1 minute` | Positive duration; choose longer than a normal attempt or renew ownership |
 | `Dispatcher.PollInterval` | `1 second` | Positive duration |
 | `Dispatcher.ShutdownGracePeriod` | `30 seconds` | Zero or greater |
+| `Dispatcher.Metrics.EventTypeTagAllowList` | Empty | Bounded set of event types allowed as metric tag values; empty omits the tag |
+| `Dispatcher.Metrics.UnknownEventTypeTagValue` | `other` | Bounded fallback value for unapproved event types |
 | `Retry.MaxAttempts` | `5` | Integer greater than zero; includes the current attempt |
 | `Retry.BaseDelay` | `1 second` | Positive duration |
 | `Retry.MaxDelay` | `5 minutes` | Positive and greater than or equal to `BaseDelay` |
 | `Retry.JitterFactor` | `0.2` | Finite number from `0` through `1` |
+| `MessageLimits.MaxPayloadBytes` | `1 MiB` | Zero or greater; enforced by `IWebhookEnqueueService` before persistence |
+| `MessageLimits.MaxCustomHeaders` | `32` | Zero or greater; set zero to disallow persisted custom headers |
+| `MessageLimits.MaxCustomHeaderBytes` | `16 KiB` | Zero or greater; sums UTF-8 header names and values |
+| `MessageLimits.MaxIdCharacters` | `128` | Greater than zero |
+| `MessageLimits.MaxEventTypeCharacters` | `128` | Greater than zero |
+| `MessageLimits.MaxContentTypeCharacters` | `256` | Greater than zero |
+| `MessageLimits.MaxDestinationUriCharacters` | `2048` | Greater than zero |
 | `Transport.AttemptTimeout` | `30 seconds` | Positive duration or `Timeout.InfiniteTimeSpan` |
 | `Transport.MaxResponseBodyBytes` | `16 KiB` | Zero or greater |
+| `Transport.AllowInsecureHttp` | `false` | Set `true` only for deliberate development, loopback, or trusted plaintext HTTP scenarios |
+| `Transport.DestinationPolicy` | `null` | Configure for untrusted or tenant-provided webhook URLs |
 | Signing header names | `X-Webhook-*` defaults | Non-empty and unique, case-insensitively |
 | Signing time provider | `TimeProvider.System` | Non-null |
 
-The DI-managed `HttpClient` has automatic redirects disabled and an infinite `HttpClient.Timeout`; `Transport.AttemptTimeout` is the authoritative per-attempt timeout. Applications can add handlers or other client configuration through `ReliableWebhooksBuilder.HttpClientBuilder`.
+The DI-managed `HttpClient` has automatic redirects disabled, automatic cookies disabled, default `HttpClientFactory` request logging removed, and an infinite `HttpClient.Timeout`; `Transport.AttemptTimeout` is the authoritative per-attempt timeout. Applications can add handlers or other client configuration through `ReliableWebhooksBuilder.HttpClientBuilder`.
+
+Default HTTP client logging is removed because webhook destination paths and query strings often carry endpoint secrets. Applications that deliberately add raw HTTP request logging back to `ReliableWebhooksBuilder.HttpClientBuilder` must treat destination URIs and custom header values as sensitive.
+
+Automatic cookies are disabled because the `IHttpClientFactory` handler is pooled and cookie containers can otherwise share receiver-controlled state between deliveries. Direct `WebhookHttpTransport` construction uses the caller-provided `HttpClient` exactly as configured; applications that deliberately use cookies must own the isolation and security review for that client.
 
 Invalid options fail during host startup with actionable validation messages.
+
+## Destination security and SSRF boundary
+
+ReliableWebhooks treats destinations as operator-trusted by default. The `WebhookMessage` constructor verifies only that the destination is an absolute HTTP or HTTPS URI; it does not decide whether a tenant, user, imported subscriber record, or other partially trusted source should be allowed to make the application send traffic to that network location.
+
+The HTTP transport requires HTTPS destinations by default. Plaintext `http://` returns a permanent `WebhookTransportFailureKind.InsecureHttpDenied` result before sending bytes unless `WebhookHttpTransportOptions.AllowInsecureHttp` is set to `true`. Use that opt-in only for local development, loopback receivers, or a deliberately trusted private network. HMAC signing does not provide confidentiality, does not authenticate the remote server, and does not replace TLS. Production deployments should use platform-secure TLS defaults, TLS 1.2 or newer, and must not disable certificate validation to work around endpoint misconfiguration.
+
+When webhook destinations are tenant-configurable or otherwise untrusted, configure `WebhookHttpTransportOptions.DestinationPolicy`:
+
+```csharp
+options.Transport = new WebhookHttpTransportOptions
+{
+    DestinationPolicy = new PublicNetworkWebhookDestinationPolicy(
+        allowedHosts: ["partner-intranet-webhooks.example"]),
+};
+```
+
+`PublicNetworkWebhookDestinationPolicy` resolves DNS before each attempt and denies destinations that resolve to loopback, unspecified, multicast, link-local, RFC1918 private IPv4, IPv6 unique-local, shared carrier-grade IPv4, documentation, benchmarking, transition, reserved, or other special-use/non-public address families. A denied destination returns a permanent delivery result with `WebhookTransportFailureKind.DestinationPolicyDenied`, so the dispatcher records a permanent failure instead of retrying forever.
+
+Use `allowedHosts` only for exact host names or IP literals that your operators intentionally allow, such as a known intranet webhook endpoint. This is safer than disabling the policy for every destination.
+
+The policy validates before the `HttpClient` sends the request. With a normal `HttpClient` handler, DNS could theoretically change between policy resolution and the handler's connection. Keep automatic redirects disabled, keep tenant URL updates governed by application authorization, prefer exact allow-lists for private targets, and use network egress controls when your threat model requires connection-time enforcement.
 
 ## Safe production defaults and tuning
 
 Start with the defaults, then tune from observed latency and backlog rather than maximizing concurrency blindly.
 
-- Set `LeaseDuration` comfortably above the expected request attempt duration, including network variance.
+- Set `LeaseDuration` high enough for the backing store and network to renew comfortably; active attempts renew at half the lease duration, capped at 30 seconds.
 - Keep `AttemptTimeout` bounded unless another cancellation mechanism is guaranteed.
 - Increase `MaxConcurrency` only when the backing store, outbound network, and receivers can sustain it.
-- Keep event types to a bounded vocabulary because event type is used as a metric dimension.
+- Keep event types to a bounded vocabulary before opting into the event-type metric tag.
 - Configure retry delays to avoid synchronized retry storms across many workers.
 - Treat dead-lettered deliveries as operational work that needs monitoring and an explicit replay/remediation process.
+
+Delivery-scoped extension failures are isolated to the active delivery. Exceptions from the configured transport, signer, signing secret provider, or response classification path are logged by exception type, recorded on the attempt trace, and persisted through the retry/dead-letter policy so one poison delivery does not stop unrelated work. Claim failures, lease-renewal persistence failures, and store state-transition failures remain infrastructure failures because the dispatcher cannot safely prove ownership or progress without a working store; alert on those as worker/store health incidents.
 
 ## Troubleshooting
 
@@ -364,7 +487,7 @@ Confirm that a store is registered. `AddReliableWebhooks` intentionally does not
 
 ### A webhook is delivered more than once
 
-This can be expected under at-least-once semantics. Verify that the receiver deduplicates by a stable ID authenticated by the signed payload. Also inspect worker crashes, attempt timeouts, lease duration, and failures while persisting success.
+This can be expected under at-least-once semantics. Verify that the receiver deduplicates by a stable ID authenticated by the signed HMAC envelope. Also inspect worker crashes, attempt timeouts, lease duration, and failures while persisting success.
 
 ### Work remains `InProgress`
 
@@ -380,7 +503,7 @@ Check `Retry-After`, exponential backoff, jitter, `MaxDelay`, and the dispatcher
 
 ### Signature verification fails
 
-Verify the raw body bytes, timestamp text, shared secret, and signing-header names. Do not parse and reserialize JSON before calculating the HMAC. Ensure the receiver includes `timestamp + "."` before the exact body bytes and compares the digest in constant time.
+Verify the raw body bytes, timestamp text, generated webhook ID, event type, serialized content type, shared secret, and signing-header names. Do not parse and reserialize JSON before calculating the HMAC. Ensure the receiver rebuilds the `rw-hmac-sha256/v1` length-prefixed frames before the exact body bytes and compares the digest in constant time.
 
 ### Process restarts lose queued work
 

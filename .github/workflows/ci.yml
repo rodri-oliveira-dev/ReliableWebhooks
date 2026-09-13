@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build-test-pack:
-    name: Restore, build, test, coverage e pack
+    name: CI
     runs-on: ubuntu-latest
 
     steps:

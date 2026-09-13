@@ -1,6 +1,9 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using ReliableWebhooks;
@@ -77,6 +80,171 @@ public sealed class DependencyInjectionTests
     }
 
     [Fact]
+    public async Task DefaultTransportRejectsPlainHttpDestinationThroughDependencyInjection()
+    {
+        ServiceCollection services = new();
+        IHttpClientFactory httpClientFactory = Substitute.For<IHttpClientFactory>();
+        SuccessHandler handler = new();
+        httpClientFactory
+            .CreateClient(Arg.Any<string>())
+            .Returns(_ => new HttpClient(handler, disposeHandler: false)
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+            });
+        services.AddSingleton(httpClientFactory);
+
+        _ = services.AddReliableWebhooks();
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookDeliveryTransport transport = provider.GetRequiredService<IWebhookDeliveryTransport>();
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage("factory-http-denied", new Uri("http://example.test/webhooks")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.PermanentFailure, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.InsecureHttpDenied, result.FailureKind);
+        Assert.Equal(0, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task DefaultTransportAllowsPlainHttpDestinationWhenExplicitlyConfigured()
+    {
+        ServiceCollection services = new();
+        IHttpClientFactory httpClientFactory = Substitute.For<IHttpClientFactory>();
+        SuccessHandler handler = new();
+        httpClientFactory
+            .CreateClient(Arg.Any<string>())
+            .Returns(_ => new HttpClient(handler, disposeHandler: false)
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+            });
+        services.AddSingleton(httpClientFactory);
+
+        _ = services.AddReliableWebhooks(options =>
+        {
+            options.Transport = new WebhookHttpTransportOptions
+            {
+                AllowInsecureHttp = true,
+            };
+        });
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookDeliveryTransport transport = provider.GetRequiredService<IWebhookDeliveryTransport>();
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage("factory-http-allowed", new Uri("http://127.0.0.1/webhooks")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(1, handler.RequestCount);
+    }
+
+    [Fact]
+    public async Task DefaultTransportUsesRegisteredRequestHeaderProvider()
+    {
+        const string credentialValue = "Bearer dynamic-di-token";
+        ServiceCollection services = new();
+        SuccessHandler handler = new();
+        services.AddSingleton<IWebhookRequestHeaderProvider>(
+            new StaticHeaderProvider(new Dictionary<string, string>
+            {
+                ["Authorization"] = credentialValue,
+            }));
+
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks();
+        builder.HttpClientBuilder.ConfigurePrimaryHttpMessageHandler(() => handler);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookDeliveryTransport transport = provider.GetRequiredService<IWebhookDeliveryTransport>();
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage("dynamic-auth"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(credentialValue, handler.Authorization);
+    }
+
+    [Fact]
+    public async Task DefaultHttpClientDoesNotLogSecretBearingRequestUriOrHeaders()
+    {
+        const string pathSecret = "path-secret-sentinel";
+        const string querySecret = "query-secret-sentinel";
+        const string headerSecret = "header-secret-sentinel";
+        RecordingLoggerProvider loggerProvider = new();
+        ServiceCollection services = new();
+        services.AddLogging(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Trace);
+            builder.AddProvider(loggerProvider);
+        });
+
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks();
+        builder.HttpClientBuilder.ConfigurePrimaryHttpMessageHandler(() => new SuccessHandler());
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        HttpClient client = provider
+            .GetRequiredService<IHttpClientFactory>()
+            .CreateClient(builder.HttpClientBuilder.Name);
+        using HttpRequestMessage request = new(
+            HttpMethod.Post,
+            $"https://example.test/webhooks/{pathSecret}?token={querySecret}")
+        {
+            Content = new ByteArrayContent([1, 2, 3]),
+        };
+        request.Headers.Add("X-Secret-Test", headerSecret);
+
+        using HttpResponseMessage response = await client.SendAsync(
+            request,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        string logText = string.Join('\n', loggerProvider.Messages);
+        Assert.DoesNotContain(pathSecret, logText, StringComparison.Ordinal);
+        Assert.DoesNotContain(querySecret, logText, StringComparison.Ordinal);
+        Assert.DoesNotContain(headerSecret, logText, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Net.Http.HttpClient.ReliableWebhooks", logText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DefaultHttpClientDoesNotPersistCookiesBetweenRequests()
+    {
+        await using LoopbackHttpServer server = new(
+        [
+            "Set-Cookie: reliable_cookie=secret-cookie; Path=/receiver",
+            string.Empty,
+        ]);
+        ServiceCollection services = new();
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks();
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        HttpClient client = provider
+            .GetRequiredService<IHttpClientFactory>()
+            .CreateClient(builder.HttpClientBuilder.Name);
+
+        using HttpResponseMessage first = await client.GetAsync(
+            server.CreateUri("/receiver/set"),
+            TestContext.Current.CancellationToken);
+        using HttpRequestMessage secondRequest = new(
+            HttpMethod.Get,
+            server.CreateUri("/receiver/next"));
+        secondRequest.Headers.Add("Authorization", "Bearer explicit-auth");
+        using HttpResponseMessage second = await client.SendAsync(
+            secondRequest,
+            TestContext.Current.CancellationToken);
+
+        first.EnsureSuccessStatusCode();
+        second.EnsureSuccessStatusCode();
+        string[] requests = await server.GetRequestsAsync(TestContext.Current.CancellationToken);
+
+        Assert.Contains("GET /receiver/set ", requests[0], StringComparison.Ordinal);
+        Assert.Contains("GET /receiver/next ", requests[1], StringComparison.Ordinal);
+        Assert.DoesNotContain("Cookie:", requests[1], StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Authorization: Bearer explicit-auth", requests[1], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task HostedDispatcherDeliversEnqueuedWebhookThroughConfiguredHttpClient()
     {
         ServiceCollection services = new();
@@ -119,6 +287,150 @@ public sealed class DependencyInjectionTests
     }
 
     [Fact]
+    public async Task ScopedStoreRegistrationIsResolvedInsideOperationScopes()
+    {
+        ServiceCollection services = new();
+        services.AddSingleton<ScopedStoreState>();
+        services.AddScoped<IWebhookDeliveryStore, ScopedTrackingStore>();
+        _ = services.AddReliableWebhooks();
+
+        await using ServiceProvider provider = services.BuildServiceProvider(
+            new ServiceProviderOptions
+            {
+                ValidateScopes = true,
+                ValidateOnBuild = true,
+            });
+        IWebhookEnqueueService enqueueService = provider.GetRequiredService<IWebhookEnqueueService>();
+        ScopedStoreState state = provider.GetRequiredService<ScopedStoreState>();
+
+        _ = await enqueueService.EnqueueAsync(
+            CreateMessage("scoped-operation-1"),
+            TestContext.Current.CancellationToken);
+        _ = await enqueueService.EnqueueAsync(
+            CreateMessage("scoped-operation-2"),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(state.CreatedStoreIds.Length >= 2);
+        Assert.Equal(state.CreatedStoreIds.Length, state.DisposedStoreIds.Length);
+        Assert.Equal(
+            state.CreatedStoreIds.OrderBy(id => id, StringComparer.Ordinal),
+            state.DisposedStoreIds.OrderBy(id => id, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task HostedDispatcherSupportsScopedStoreWithValidateScopes()
+    {
+        ServiceCollection services = new();
+        ScopedStoreState state = new();
+        BlockingDispatcherDelay delay = new();
+        SuccessHandler handler = new();
+
+        services.AddSingleton(state);
+        services.AddScoped<IWebhookDeliveryStore, ScopedTrackingStore>();
+        services.AddSingleton<IWebhookDispatcherDelay>(delay);
+
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks(options =>
+        {
+            options.Dispatcher.MaxConcurrency = 1;
+            options.Dispatcher.PollInterval = TimeSpan.FromMinutes(1);
+            options.Dispatcher.ShutdownGracePeriod = TimeSpan.FromSeconds(1);
+        });
+        builder.HttpClientBuilder.ConfigurePrimaryHttpMessageHandler(() => handler);
+        _ = builder.AddHostedDispatcher();
+
+        await using ServiceProvider provider = services.BuildServiceProvider(
+            new ServiceProviderOptions
+            {
+                ValidateScopes = true,
+                ValidateOnBuild = true,
+            });
+        IWebhookEnqueueService enqueueService = provider.GetRequiredService<IWebhookEnqueueService>();
+        IHostedService hostedService = Assert.Single(provider.GetServices<IHostedService>());
+        WebhookMessage message = CreateMessage("hosted-scoped-store");
+
+        _ = await enqueueService.EnqueueAsync(message, TestContext.Current.CancellationToken);
+
+        await hostedService.StartAsync(TestContext.Current.CancellationToken);
+        await delay.Entered.WaitAsync(TestContext.Current.CancellationToken);
+        await hostedService.StopAsync(TestContext.Current.CancellationToken);
+
+        WebhookDeliverySnapshot? snapshot = await state.InnerStore.GetAsync(
+            message.Id,
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(snapshot);
+        Assert.Equal(DeliveryState.Succeeded, snapshot.State);
+        Assert.Equal(1, handler.RequestCount);
+        Assert.Equal(state.CreatedStoreIds.Length, state.DisposedStoreIds.Length);
+    }
+
+    [Fact]
+    public async Task HostedDispatcherContinuesAfterDeliveryScopedTransportException()
+    {
+        ServiceCollection services = new();
+        InMemoryWebhookDeliveryStore store = new();
+        BlockingDispatcherDelay delay = new();
+        DeliveryScopedFaultingTransport transport = new("hosted-poison");
+
+        await store.EnqueueAsync(
+            CreateMessage("hosted-poison"),
+            DateTimeOffset.UtcNow,
+            TestContext.Current.CancellationToken);
+        await store.EnqueueAsync(
+            CreateMessage("hosted-healthy"),
+            DateTimeOffset.UtcNow,
+            TestContext.Current.CancellationToken);
+
+        services.AddSingleton<IWebhookDeliveryStore>(store);
+        services.AddSingleton<IWebhookDeliveryTransport>(transport);
+        services.AddSingleton<IWebhookDispatcherDelay>(delay);
+
+        ReliableWebhooksBuilder builder = services.AddReliableWebhooks(options =>
+        {
+            options.Dispatcher.MaxConcurrency = 2;
+            options.Dispatcher.PollInterval = TimeSpan.FromMinutes(1);
+            options.Dispatcher.ShutdownGracePeriod = TimeSpan.FromSeconds(1);
+            options.Retry = new WebhookRetryPolicyOptions
+            {
+                MaxAttempts = 1,
+                BaseDelay = TimeSpan.FromSeconds(1),
+                MaxDelay = TimeSpan.FromSeconds(1),
+                JitterFactor = 0,
+            };
+        });
+        _ = builder.AddHostedDispatcher();
+
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        IHostedService hostedService = Assert.Single(provider.GetServices<IHostedService>());
+
+        await hostedService.StartAsync(TestContext.Current.CancellationToken);
+        await WaitUntilAsync(async () =>
+        {
+            WebhookDeliverySnapshot? poison = await store.GetAsync(
+                "hosted-poison",
+                TestContext.Current.CancellationToken);
+            WebhookDeliverySnapshot? healthy = await store.GetAsync(
+                "hosted-healthy",
+                TestContext.Current.CancellationToken);
+
+            return poison?.State == DeliveryState.DeadLettered
+                && healthy?.State == DeliveryState.Succeeded;
+        });
+        await hostedService.StopAsync(TestContext.Current.CancellationToken);
+
+        WebhookDeliverySnapshot? poisonSnapshot = await store.GetAsync(
+            "hosted-poison",
+            TestContext.Current.CancellationToken);
+        WebhookDeliverySnapshot? healthySnapshot = await store.GetAsync(
+            "hosted-healthy",
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(poisonSnapshot);
+        Assert.Equal(DeliveryState.DeadLettered, poisonSnapshot.State);
+        Assert.NotNull(healthySnapshot);
+        Assert.Equal(DeliveryState.Succeeded, healthySnapshot.State);
+    }
+
+    [Fact]
     public void InvalidOptionsFailWithActionableValidationMessage()
     {
         ServiceCollection services = new();
@@ -149,14 +461,85 @@ public sealed class DependencyInjectionTests
             cancellation.Token));
     }
 
-    private static WebhookMessage CreateMessage(string id)
+    [Fact]
+    public async Task EnqueueServiceRejectsOversizedMessagesBeforePersistence()
+    {
+        ServiceCollection services = new();
+        CountingStore store = new();
+        services.AddSingleton<IWebhookDeliveryStore>(store);
+        _ = services.AddReliableWebhooks(options => options.MessageLimits.MaxPayloadBytes = 1);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookEnqueueService enqueueService = provider.GetRequiredService<IWebhookEnqueueService>();
+
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(() => enqueueService.EnqueueAsync(
+            CreateMessage("oversized-payload", payload: new byte[] { 1, 2 }),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("message", exception.ParamName);
+        Assert.Equal(0, store.EnqueueCalls);
+    }
+
+    [Fact]
+    public void InvalidMessageLimitOptionsFailWithActionableValidationMessage()
+    {
+        ServiceCollection services = new();
+        services.AddSingleton<IWebhookDeliveryStore, InMemoryWebhookDeliveryStore>();
+        _ = services.AddReliableWebhooks(options => options.MessageLimits.MaxPayloadBytes = -1);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        OptionsValidationException exception = Assert.Throws<OptionsValidationException>(
+            () => provider.GetRequiredService<IWebhookEnqueueService>());
+        Assert.Contains("MessageLimits.MaxPayloadBytes cannot be negative.", exception.Failures);
+    }
+
+    [Fact]
+    public void InvalidMetricOptionsFailWithActionableValidationMessage()
+    {
+        ServiceCollection services = new();
+        services.AddSingleton<IWebhookDeliveryStore, InMemoryWebhookDeliveryStore>();
+        _ = services.AddReliableWebhooks(options =>
+        {
+            options.Dispatcher.Metrics = new WebhookMetricsOptions
+            {
+                EventTypeTagAllowList = new HashSet<string>(["valid", "bad\nevent"], StringComparer.Ordinal),
+            };
+        });
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        OptionsValidationException exception = Assert.Throws<OptionsValidationException>(
+            () => provider.GetRequiredService<WebhookDispatcher>());
+        Assert.Contains("Dispatcher.Metrics.EventTypeTagAllowList must not contain control characters.", exception.Failures);
+    }
+
+    private static WebhookMessage CreateMessage(
+        string id,
+        Uri? destination = null,
+        byte[]? payload = null)
     {
         return new WebhookMessage(
             id,
             "order.created",
-            new Uri("https://example.test/webhooks"),
-            "{}"u8.ToArray(),
+            destination ?? new Uri("https://example.test/webhooks"),
+            payload ?? "{}"u8.ToArray(),
             "application/json");
+    }
+
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition)
+    {
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(10), TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail("The expected condition was not met.");
     }
 
     private sealed class BlockingDispatcherDelay : IWebhookDispatcherDelay
@@ -174,9 +557,44 @@ public sealed class DependencyInjectionTests
         }
     }
 
+    private sealed class DeliveryScopedFaultingTransport : IWebhookDeliveryTransport
+    {
+        private readonly string faultingId;
+        private readonly WebhookHttpTransport innerTransport = new(
+            new HttpClient(new SuccessHandler(), disposeHandler: true)
+            {
+                Timeout = Timeout.InfiniteTimeSpan,
+            });
+
+        public DeliveryScopedFaultingTransport(string faultingId)
+        {
+            this.faultingId = faultingId;
+        }
+
+        public Task<WebhookDeliveryResult> SendAsync(
+            WebhookMessage message,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (string.Equals(message.Id, faultingId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("transport failure");
+            }
+
+            return innerTransport.SendAsync(message, cancellationToken);
+        }
+    }
+
     private sealed class SuccessHandler : HttpMessageHandler
     {
         internal int RequestCount
+        {
+            get;
+            private set;
+        }
+
+        internal string? Authorization
         {
             get;
             private set;
@@ -187,7 +605,424 @@ public sealed class DependencyInjectionTests
             CancellationToken cancellationToken)
         {
             RequestCount++;
+            Authorization = request.Headers.Authorization?.ToString();
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        }
+    }
+
+    private sealed class StaticHeaderProvider : IWebhookRequestHeaderProvider
+    {
+        private readonly IReadOnlyDictionary<string, string> headers;
+
+        public StaticHeaderProvider(IReadOnlyDictionary<string, string> headers)
+        {
+            this.headers = headers;
+        }
+
+        public ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
+            WebhookMessage message,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(headers);
+        }
+    }
+
+    private sealed class RecordingLoggerProvider : ILoggerProvider
+    {
+        private readonly object gate = new();
+        private readonly List<string> messages = [];
+
+        public string[] Messages
+        {
+            get
+            {
+                lock (gate)
+                {
+                    return messages.ToArray();
+                }
+            }
+        }
+
+        public ILogger CreateLogger(string categoryName)
+        {
+            return new RecordingLogger(this, categoryName);
+        }
+
+        public void Dispose()
+        {
+        }
+
+        private void Add(string categoryName, string message)
+        {
+            lock (gate)
+            {
+                messages.Add($"{categoryName}: {message}");
+            }
+        }
+
+        private sealed class RecordingLogger : ILogger
+        {
+            private readonly RecordingLoggerProvider provider;
+            private readonly string categoryName;
+
+            internal RecordingLogger(
+                RecordingLoggerProvider provider,
+                string categoryName)
+            {
+                this.provider = provider;
+                this.categoryName = categoryName;
+            }
+
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull
+            {
+                return null;
+            }
+
+            public bool IsEnabled(LogLevel logLevel)
+            {
+                return true;
+            }
+
+            public void Log<TState>(
+                LogLevel logLevel,
+                EventId eventId,
+                TState state,
+                Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                provider.Add(categoryName, formatter(state, exception));
+            }
+        }
+    }
+
+    private sealed class LoopbackHttpServer : IAsyncDisposable
+    {
+        private readonly TcpListener listener;
+        private readonly string[] responseHeaders;
+        private readonly Task<string[]> serverTask;
+
+        public LoopbackHttpServer(string[] responseHeaders)
+        {
+            this.responseHeaders = responseHeaders;
+            listener = new TcpListener(IPAddress.Loopback, port: 0);
+            listener.Start();
+            Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            serverTask = Task.Run(ServeAsync);
+        }
+
+        private int Port
+        {
+            get;
+        }
+
+        public Uri CreateUri(string path)
+        {
+            return new Uri($"http://127.0.0.1:{Port}{path}");
+        }
+
+        public async Task<string[]> GetRequestsAsync(CancellationToken cancellationToken)
+        {
+            return await serverTask.WaitAsync(cancellationToken);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            listener.Stop();
+            try
+            {
+                _ = await serverTask;
+            }
+            catch (SocketException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        private async Task<string[]> ServeAsync()
+        {
+            List<string> requests = new(responseHeaders.Length);
+
+            foreach (string headers in responseHeaders)
+            {
+                using TcpClient client = await listener.AcceptTcpClientAsync();
+                await using NetworkStream stream = client.GetStream();
+                requests.Add(await ReadRequestHeadersAsync(stream));
+                await WriteResponseAsync(stream, headers);
+            }
+
+            return requests.ToArray();
+        }
+
+        private static async Task<string> ReadRequestHeadersAsync(NetworkStream stream)
+        {
+            List<byte> bytes = [];
+            byte[] buffer = new byte[1];
+
+            while (true)
+            {
+                int read = await stream.ReadAsync(buffer);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                bytes.Add(buffer[0]);
+
+                if (bytes.Count >= 4
+                    && bytes[^4] == (byte)'\r'
+                    && bytes[^3] == (byte)'\n'
+                    && bytes[^2] == (byte)'\r'
+                    && bytes[^1] == (byte)'\n')
+                {
+                    break;
+                }
+            }
+
+            return Encoding.ASCII.GetString(bytes.ToArray());
+        }
+
+        private static async Task WriteResponseAsync(NetworkStream stream, string headers)
+        {
+            string response = string.IsNullOrWhiteSpace(headers)
+                ? "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n"
+                : $"HTTP/1.1 204 No Content\r\n{headers}\r\nConnection: close\r\n\r\n";
+            byte[] bytes = Encoding.ASCII.GetBytes(response);
+            await stream.WriteAsync(bytes);
+        }
+    }
+
+    private sealed class ScopedStoreState
+    {
+        private readonly object gate = new();
+        private readonly List<string> createdStoreIds = [];
+        private readonly List<string> disposedStoreIds = [];
+
+        internal InMemoryWebhookDeliveryStore InnerStore
+        {
+            get;
+        } = new();
+
+        internal string[] CreatedStoreIds
+        {
+            get
+            {
+                lock (gate)
+                {
+                    return createdStoreIds.ToArray();
+                }
+            }
+        }
+
+        internal string[] DisposedStoreIds
+        {
+            get
+            {
+                lock (gate)
+                {
+                    return disposedStoreIds.ToArray();
+                }
+            }
+        }
+
+        internal void Created(string id)
+        {
+            lock (gate)
+            {
+                createdStoreIds.Add(id);
+            }
+        }
+
+        internal void Disposed(string id)
+        {
+            lock (gate)
+            {
+                disposedStoreIds.Add(id);
+            }
+        }
+    }
+
+    private sealed class ScopedTrackingStore : IWebhookDeliveryStore, IDisposable
+    {
+        private readonly ScopedStoreState state;
+        private readonly string id = Guid.NewGuid().ToString("N");
+
+        public ScopedTrackingStore(ScopedStoreState state)
+        {
+            this.state = state;
+            state.Created(id);
+        }
+
+        public Task<WebhookEnqueueResult> EnqueueAsync(
+            WebhookMessage message,
+            DateTimeOffset nextAttemptAt,
+            CancellationToken cancellationToken = default)
+        {
+            return state.InnerStore.EnqueueAsync(message, nextAttemptAt, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<WebhookDeliveryLease>> ClaimDueAsync(
+            DateTimeOffset now,
+            TimeSpan leaseDuration,
+            int maxCount,
+            CancellationToken cancellationToken = default)
+        {
+            return state.InnerStore.ClaimDueAsync(now, leaseDuration, maxCount, cancellationToken);
+        }
+
+        public Task<WebhookDeliveryLease> RenewLeaseAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset now,
+            TimeSpan leaseDuration,
+            CancellationToken cancellationToken = default)
+        {
+            return state.InnerStore.RenewLeaseAsync(lease, now, leaseDuration, cancellationToken);
+        }
+
+        public Task MarkSucceededAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            CancellationToken cancellationToken = default)
+        {
+            return state.InnerStore.MarkSucceededAsync(lease, completedAt, cancellationToken);
+        }
+
+        public Task ScheduleRetryAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            DateTimeOffset nextAttemptAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return state.InnerStore.ScheduleRetryAsync(
+                lease,
+                completedAt,
+                nextAttemptAt,
+                lastError,
+                cancellationToken);
+        }
+
+        public Task MarkPermanentlyFailedAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return state.InnerStore.MarkPermanentlyFailedAsync(
+                lease,
+                completedAt,
+                lastError,
+                cancellationToken);
+        }
+
+        public Task DeadLetterAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return state.InnerStore.DeadLetterAsync(
+                lease,
+                completedAt,
+                lastError,
+                cancellationToken);
+        }
+
+        public Task<WebhookDeliverySnapshot?> GetAsync(
+            string webhookId,
+            CancellationToken cancellationToken = default)
+        {
+            return state.InnerStore.GetAsync(webhookId, cancellationToken);
+        }
+
+        public void Dispose()
+        {
+            state.Disposed(id);
+        }
+    }
+
+    private sealed class CountingStore : IWebhookDeliveryStore
+    {
+        private readonly InMemoryWebhookDeliveryStore innerStore = new();
+
+        internal int EnqueueCalls
+        {
+            get;
+            private set;
+        }
+
+        public Task<WebhookEnqueueResult> EnqueueAsync(
+            WebhookMessage message,
+            DateTimeOffset nextAttemptAt,
+            CancellationToken cancellationToken = default)
+        {
+            EnqueueCalls++;
+            return innerStore.EnqueueAsync(message, nextAttemptAt, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<WebhookDeliveryLease>> ClaimDueAsync(
+            DateTimeOffset now,
+            TimeSpan leaseDuration,
+            int maxCount,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.ClaimDueAsync(now, leaseDuration, maxCount, cancellationToken);
+        }
+
+        public Task<WebhookDeliveryLease> RenewLeaseAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset now,
+            TimeSpan leaseDuration,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.RenewLeaseAsync(lease, now, leaseDuration, cancellationToken);
+        }
+
+        public Task MarkSucceededAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.MarkSucceededAsync(lease, completedAt, cancellationToken);
+        }
+
+        public Task ScheduleRetryAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            DateTimeOffset nextAttemptAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.ScheduleRetryAsync(lease, completedAt, nextAttemptAt, lastError, cancellationToken);
+        }
+
+        public Task MarkPermanentlyFailedAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.MarkPermanentlyFailedAsync(lease, completedAt, lastError, cancellationToken);
+        }
+
+        public Task DeadLetterAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.DeadLetterAsync(lease, completedAt, lastError, cancellationToken);
+        }
+
+        public Task<WebhookDeliverySnapshot?> GetAsync(
+            string webhookId,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.GetAsync(webhookId, cancellationToken);
         }
     }
 }

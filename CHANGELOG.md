@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added an opt-in webhook destination authorization policy hook and `PublicNetworkWebhookDestinationPolicy` for deployments that accept untrusted or tenant-configurable webhook URLs.
+- Added configurable `WebhookMessageLimits` and DI enqueue-service enforcement for outbound payload, custom-header, and persisted metadata size limits.
+- Added `WebhookMetricsOptions` to keep built-in metric event-type dimensions disabled by default and allow bounded opt-in through an event-type allow-list.
+
+### Changed
+
+- `WebhookHttpTransport` now reuses the immutable payload buffer captured by `WebhookMessage` for signing and request content instead of creating an additional full payload copy on each send.
+- Built-in metrics no longer tag raw webhook event types by default; logs and traces continue to include event type for correlation.
+- Custom webhook headers are validated when a `WebhookMessage` is created so invalid header names or control-character values cannot be persisted as poison deliveries.
+- Webhook IDs, event types, and content types are validated when a `WebhookMessage` is created before those values can be used in generated HTTP headers or telemetry.
+- Webhook HTTP transport now requires HTTPS destinations by default; plaintext HTTP delivery requires explicit `WebhookHttpTransportOptions.AllowInsecureHttp` opt-in.
+- The DI-managed webhook `HttpClient` now disables automatic cookies to avoid hidden state sharing between deliveries.
+- Dispatcher delivery-scoped extension failures are isolated to the active delivery and progress through retry/dead-letter handling instead of stopping unrelated processing.
+- The built-in HMAC-SHA256 signer now rejects signing secrets shorter than 32 bytes (256 bits) so weak keys fail closed before delivery.
+- The built-in HMAC-SHA256 `v1` signature now authenticates the timestamp, webhook ID, event type, content type, and exact payload bytes with a versioned length-prefixed canonical envelope.
+- `WebhookMessage.ContentType` is now normalized with the platform HTTP media-type parser when the message is created so the signed content type matches the serialized `Content-Type` header sent by the default transport.
+- Custom webhook headers can no longer use transport-reserved routing or framing names such as `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, or `Upgrade`.
+- Added `IWebhookRequestHeaderProvider` for send-time credential headers and reserved persisted `Authorization`/`Cookie` headers to avoid storing request credentials with durable deliveries.
+
 ## [0.1.0] - 2026-09-12
 
 ### Added

@@ -10,6 +10,7 @@ internal sealed class ReliableWebhooksOptionsValidator : IValidateOptions<Reliab
 
         List<string> failures = [];
         ValidateDispatcher(options.Dispatcher, failures);
+        ValidateMessageLimits(options.MessageLimits, failures);
         ValidateRetry(options.Retry, failures);
         ValidateTransport(options.Transport, failures);
 
@@ -51,6 +52,96 @@ internal sealed class ReliableWebhooksOptionsValidator : IValidateOptions<Reliab
         if (options.TimeProvider is null)
         {
             failures.Add("Dispatcher.TimeProvider must not be null.");
+        }
+
+        ValidateMetrics(options.Metrics, "Dispatcher.Metrics", failures);
+    }
+
+    private static void ValidateMetrics(
+        WebhookMetricsOptions? options,
+        string path,
+        List<string> failures)
+    {
+        if (options is null)
+        {
+            failures.Add($"{path} must not be null.");
+            return;
+        }
+
+        if (options.EventTypeTagAllowList is null)
+        {
+            failures.Add($"{path}.EventTypeTagAllowList must not be null.");
+            return;
+        }
+
+        foreach (string eventType in options.EventTypeTagAllowList)
+        {
+            if (string.IsNullOrWhiteSpace(eventType))
+            {
+                failures.Add($"{path}.EventTypeTagAllowList must not contain empty or whitespace values.");
+                break;
+            }
+
+            if (ContainsControlCharacter(eventType))
+            {
+                failures.Add($"{path}.EventTypeTagAllowList must not contain control characters.");
+                break;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(options.UnknownEventTypeTagValue))
+        {
+            failures.Add($"{path}.UnknownEventTypeTagValue must not be empty or whitespace.");
+        }
+        else if (ContainsControlCharacter(options.UnknownEventTypeTagValue))
+        {
+            failures.Add($"{path}.UnknownEventTypeTagValue must not contain control characters.");
+        }
+    }
+
+    private static void ValidateMessageLimits(
+        WebhookMessageLimits? options,
+        List<string> failures)
+    {
+        if (options is null)
+        {
+            failures.Add("ReliableWebhooksOptions.MessageLimits must not be null.");
+            return;
+        }
+
+        if (options.MaxPayloadBytes < 0)
+        {
+            failures.Add("MessageLimits.MaxPayloadBytes cannot be negative.");
+        }
+
+        if (options.MaxCustomHeaders < 0)
+        {
+            failures.Add("MessageLimits.MaxCustomHeaders cannot be negative.");
+        }
+
+        if (options.MaxCustomHeaderBytes < 0)
+        {
+            failures.Add("MessageLimits.MaxCustomHeaderBytes cannot be negative.");
+        }
+
+        if (options.MaxIdCharacters < 1)
+        {
+            failures.Add("MessageLimits.MaxIdCharacters must be greater than zero.");
+        }
+
+        if (options.MaxEventTypeCharacters < 1)
+        {
+            failures.Add("MessageLimits.MaxEventTypeCharacters must be greater than zero.");
+        }
+
+        if (options.MaxContentTypeCharacters < 1)
+        {
+            failures.Add("MessageLimits.MaxContentTypeCharacters must be greater than zero.");
+        }
+
+        if (options.MaxDestinationUriCharacters < 1)
+        {
+            failures.Add("MessageLimits.MaxDestinationUriCharacters must be greater than zero.");
         }
     }
 
@@ -146,5 +237,18 @@ internal sealed class ReliableWebhooksOptionsValidator : IValidateOptions<Reliab
         {
             failures.Add("Transport.Signing.TimeProvider must not be null.");
         }
+    }
+
+    private static bool ContainsControlCharacter(string value)
+    {
+        foreach (char character in value)
+        {
+            if (character <= '\u001f' || character == '\u007f')
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -18,7 +18,9 @@ public sealed class WebhookHttpTransportTests
             contentType: "application/vnd.reliable+json",
             headers: new Dictionary<string, string>
             {
+                ["X-Application-Token"] = "application-token",
                 ["X-Webhook-Signature"] = "signature-value",
+                ["Content-Language"] = "en-US",
             });
 
         WebhookDeliveryResult result = await transport.SendAsync(
@@ -31,7 +33,91 @@ public sealed class WebhookHttpTransportTests
         Assert.Equal(new Uri("https://example.test/webhooks"), handler.RequestUri);
         Assert.Equal(new byte[] { 1, 2, 3 }, handler.Body);
         Assert.Equal("application/vnd.reliable+json", handler.ContentType);
+        Assert.Equal("application-token", handler.ApplicationToken);
+        Assert.Equal("en-US", handler.ContentLanguage);
         Assert.Equal("signature-value", handler.Signature);
+    }
+
+    [Fact]
+    public async Task SendAsyncAddsDynamicCredentialHeadersWithoutPersistingThem()
+    {
+        const string authorization = "Bearer dynamic-secret-token";
+        const string cookie = "session=dynamic-cookie";
+        InMemoryWebhookDeliveryStore store = new();
+        WebhookMessage message = CreateMessage();
+        _ = await store.EnqueueAsync(
+            message,
+            DateTimeOffset.UtcNow,
+            TestContext.Current.CancellationToken);
+        WebhookDeliverySnapshot? beforeClaim = await store.GetAsync(
+            message.Id,
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(beforeClaim);
+        Assert.Empty(beforeClaim.Message.Headers);
+
+        RecordingHandler handler = new(
+            static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(
+            client,
+            classifier: null,
+            options: null,
+            signer: null,
+            headerProvider: new StaticHeaderProvider(new Dictionary<string, string>
+            {
+                ["Authorization"] = authorization,
+                ["Cookie"] = cookie,
+            }));
+        IReadOnlyList<WebhookDeliveryLease> leases = await store.ClaimDueAsync(
+            DateTimeOffset.UtcNow,
+            TimeSpan.FromMinutes(1),
+            1,
+            TestContext.Current.CancellationToken);
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            leases.Single().Delivery.Message,
+            TestContext.Current.CancellationToken);
+
+        WebhookDeliverySnapshot? afterSend = await store.GetAsync(
+            message.Id,
+            TestContext.Current.CancellationToken);
+        Assert.NotNull(afterSend);
+        Assert.Empty(afterSend.Message.Headers);
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(authorization, handler.Authorization);
+        Assert.Equal(cookie, handler.Cookie);
+    }
+
+    [Theory]
+    [InlineData("Host")]
+    [InlineData("Content-Length")]
+    [InlineData("Transfer-Encoding")]
+    [InlineData("Connection")]
+    [InlineData("TE")]
+    [InlineData("Trailer")]
+    [InlineData("Upgrade")]
+    [InlineData("Proxy-Authorization")]
+    [InlineData("Content-Type")]
+    public async Task SendAsyncRejectsDynamicTransportControlledHeadersBeforeNetworkIo(string headerName)
+    {
+        RecordingHandler handler = new(
+            static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(
+            client,
+            classifier: null,
+            options: null,
+            signer: null,
+            headerProvider: new StaticHeaderProvider(new Dictionary<string, string>
+            {
+                [headerName] = "value",
+            }));
+
+        InvalidOperationException exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => transport.SendAsync(CreateMessage(), TestContext.Current.CancellationToken));
+
+        Assert.Contains("reserved", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, handler.CallCount);
     }
 
     [Theory]
@@ -140,6 +226,69 @@ public sealed class WebhookHttpTransportTests
     }
 
     [Fact]
+    public async Task SendAsyncReturnsPermanentFailureWithoutSendingWhenDestinationPolicyDenies()
+    {
+        DelegateHandler handler = new(
+            static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(
+            client,
+            options: new WebhookHttpTransportOptions
+            {
+                DestinationPolicy = new DenyAllDestinationPolicy(),
+            });
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.PermanentFailure, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.DestinationPolicyDenied, result.FailureKind);
+        Assert.Null(result.StatusCode);
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncRejectsPlainHttpByDefaultWithoutSending()
+    {
+        DelegateHandler handler = new(
+            static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(client);
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(destination: new Uri("http://example.test/webhooks")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.PermanentFailure, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.InsecureHttpDenied, result.FailureKind);
+        Assert.Null(result.StatusCode);
+        Assert.Equal(0, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task SendAsyncAllowsPlainHttpWhenExplicitlyConfigured()
+    {
+        DelegateHandler handler = new(
+            static (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)));
+        using HttpClient client = CreateClient(handler);
+        WebhookHttpTransport transport = new(
+            client,
+            options: new WebhookHttpTransportOptions
+            {
+                AllowInsecureHttp = true,
+            });
+
+        WebhookDeliveryResult result = await transport.SendAsync(
+            CreateMessage(destination: new Uri("http://127.0.0.1/webhooks")),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(WebhookDeliveryOutcome.Success, result.Outcome);
+        Assert.Equal(WebhookTransportFailureKind.None, result.FailureKind);
+        Assert.Equal(1, handler.CallCount);
+    }
+
+    [Fact]
     public async Task SendAsyncBoundsCapturedResponseBody()
     {
         byte[] responseBody = [1, 2, 3, 4, 5, 6];
@@ -194,12 +343,13 @@ public sealed class WebhookHttpTransportTests
 
     private static WebhookMessage CreateMessage(
         string contentType = "application/json",
-        IReadOnlyDictionary<string, string>? headers = null)
+        IReadOnlyDictionary<string, string>? headers = null,
+        Uri? destination = null)
     {
         return new WebhookMessage(
             "webhook-123",
             "order.created",
-            new Uri("https://example.test/webhooks"),
+            destination ?? new Uri("https://example.test/webhooks"),
             new byte[] { 1, 2, 3 },
             contentType,
             headers);
@@ -220,6 +370,16 @@ public sealed class WebhookHttpTransportTests
             return statusCode == 409
                 ? WebhookDeliveryOutcome.RetryableFailure
                 : new DefaultWebhookHttpResponseClassifier().Classify(statusCode);
+        }
+    }
+
+    private sealed class DenyAllDestinationPolicy : IWebhookDestinationPolicy
+    {
+        public ValueTask<WebhookDestinationPolicyResult> AuthorizeAsync(
+            Uri destination,
+            CancellationToken cancellationToken = default)
+        {
+            return ValueTask.FromResult(WebhookDestinationPolicyResult.Deny());
         }
     }
 
@@ -278,6 +438,30 @@ public sealed class WebhookHttpTransportTests
             private set;
         }
 
+        public string? ContentLanguage
+        {
+            get;
+            private set;
+        }
+
+        public string? ApplicationToken
+        {
+            get;
+            private set;
+        }
+
+        public string? Authorization
+        {
+            get;
+            private set;
+        }
+
+        public string? Cookie
+        {
+            get;
+            private set;
+        }
+
         public string? Signature
         {
             get;
@@ -294,9 +478,40 @@ public sealed class WebhookHttpTransportTests
                 ? []
                 : await request.Content.ReadAsByteArrayAsync(cancellationToken);
             ContentType = request.Content?.Headers.ContentType?.ToString();
-            Signature = request.Headers.GetValues("X-Webhook-Signature").Single();
+            ApplicationToken = request.Headers.TryGetValues(
+                "X-Application-Token",
+                out IEnumerable<string>? applicationTokenValues)
+                ? applicationTokenValues.Single()
+                : null;
+            Authorization = request.Headers.Authorization?.ToString();
+            Cookie = request.Headers.TryGetValues("Cookie", out IEnumerable<string>? cookieValues)
+                ? cookieValues.Single()
+                : null;
+            ContentLanguage = request.Content?.Headers.ContentLanguage.SingleOrDefault();
+            Signature = request.Headers.TryGetValues("X-Webhook-Signature", out IEnumerable<string>? signatureValues)
+                ? signatureValues.Single()
+                : null;
 
             return await base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class StaticHeaderProvider : IWebhookRequestHeaderProvider
+    {
+        private readonly IReadOnlyDictionary<string, string> headers;
+
+        public StaticHeaderProvider(IReadOnlyDictionary<string, string> headers)
+        {
+            this.headers = headers;
+        }
+
+        public ValueTask<IReadOnlyDictionary<string, string>> GetHeadersAsync(
+            WebhookMessage message,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(headers);
         }
     }
 }

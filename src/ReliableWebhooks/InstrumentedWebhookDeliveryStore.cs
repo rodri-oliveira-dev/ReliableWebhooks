@@ -11,13 +11,26 @@ public sealed class InstrumentedWebhookDeliveryStore : IWebhookDeliveryStore
 {
     private readonly IWebhookDeliveryStore innerStore;
     private readonly ILogger logger;
+    private readonly WebhookMetricsOptions metricsOptions;
 
     /// <summary>
     /// Initializes a new instrumented store using a no-op logger.
     /// </summary>
     /// <param name="innerStore">The store that performs persistence operations.</param>
     public InstrumentedWebhookDeliveryStore(IWebhookDeliveryStore innerStore)
-        : this(innerStore, NullLogger.Instance)
+        : this(innerStore, NullLogger.Instance, new WebhookMetricsOptions())
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instrumented store using a no-op logger.
+    /// </summary>
+    /// <param name="innerStore">The store that performs persistence operations.</param>
+    /// <param name="metricsOptions">The metric-dimension policy.</param>
+    public InstrumentedWebhookDeliveryStore(
+        IWebhookDeliveryStore innerStore,
+        WebhookMetricsOptions metricsOptions)
+        : this(innerStore, NullLogger.Instance, metricsOptions)
     {
     }
 
@@ -27,12 +40,28 @@ public sealed class InstrumentedWebhookDeliveryStore : IWebhookDeliveryStore
     /// <param name="innerStore">The store that performs persistence operations.</param>
     /// <param name="logger">The logger that receives safe structured enqueue events.</param>
     public InstrumentedWebhookDeliveryStore(IWebhookDeliveryStore innerStore, ILogger logger)
+        : this(innerStore, logger, new WebhookMetricsOptions())
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instrumented store.
+    /// </summary>
+    /// <param name="innerStore">The store that performs persistence operations.</param>
+    /// <param name="logger">The logger that receives safe structured enqueue events.</param>
+    /// <param name="metricsOptions">The metric-dimension policy.</param>
+    public InstrumentedWebhookDeliveryStore(
+        IWebhookDeliveryStore innerStore,
+        ILogger logger,
+        WebhookMetricsOptions metricsOptions)
     {
         ArgumentNullException.ThrowIfNull(innerStore);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(metricsOptions);
 
         this.innerStore = innerStore;
         this.logger = logger;
+        this.metricsOptions = metricsOptions;
     }
 
     /// <inheritdoc />
@@ -52,8 +81,8 @@ public sealed class InstrumentedWebhookDeliveryStore : IWebhookDeliveryStore
             ReliableWebhooksLog.Enqueued(logger, message.Id, message.EventType);
             ReliableWebhooksInstrumentation.Queued.Add(
                 1,
-                new KeyValuePair<string, object?>(
-                    ReliableWebhooksInstrumentation.EventTypeTagName,
+                ReliableWebhooksInstrumentation.CreateEventTypeMetricTags(
+                    metricsOptions,
                     message.EventType));
         }
 

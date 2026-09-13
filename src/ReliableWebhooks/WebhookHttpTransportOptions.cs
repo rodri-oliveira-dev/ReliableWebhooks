@@ -34,6 +34,35 @@ public sealed class WebhookHttpTransportOptions
     } = 16 * 1024;
 
     /// <summary>
+    /// Gets a value indicating whether plaintext HTTP webhook destinations are allowed.
+    /// </summary>
+    /// <remarks>
+    /// The default is <see langword="false"/>. HTTPS is required by default because HMAC signing does
+    /// not provide confidentiality or server authentication. Set this to <see langword="true"/> only for
+    /// deliberate development, loopback, or otherwise trusted plaintext HTTP scenarios.
+    /// </remarks>
+    public bool AllowInsecureHttp
+    {
+        get;
+        init;
+    }
+
+    /// <summary>
+    /// Gets the optional policy used to authorize destinations before an outbound request is sent.
+    /// </summary>
+    /// <remarks>
+    /// The default is <see langword="null"/>, which treats destinations as operator-trusted after the
+    /// URI-shape validation performed by <see cref="WebhookMessage"/>. Applications that accept tenant or
+    /// otherwise untrusted webhook URLs should configure a policy such as
+    /// <see cref="PublicNetworkWebhookDestinationPolicy"/>.
+    /// </remarks>
+    public IWebhookDestinationPolicy? DestinationPolicy
+    {
+        get;
+        init;
+    }
+
+    /// <summary>
     /// Gets the header names and time source used when a request signer is configured.
     /// </summary>
     public WebhookSigningOptions Signing

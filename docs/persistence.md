@@ -25,6 +25,10 @@ A durable implementation must preserve enough information to resume delivery aft
 
 `InMemoryWebhookDeliveryStore` implements the behavioral protocol but is process-local and loses all state when the process exits. It is suitable for tests, samples, and local scenarios only.
 
+Destination URIs, payload bytes, content types, custom headers, and stored error text are potentially sensitive delivery data. Production stores must protect those fields with storage-layer controls appropriate to the application's data classification, including encryption at rest, least-privilege database access, protected backups/snapshots, audited administrative access, and retention/deletion policies for terminal and dead-letter records. Do not rely on ReliableWebhooks logs or metrics as the only protection; a durable store and its backups can retain these values for longer than the running process.
+
+Do not persist request credentials casually as `WebhookMessage.Headers`. The default message contract rejects `Authorization` and `Cookie` so applications can resolve those values at send time through `IWebhookRequestHeaderProvider` instead. `Proxy-Authorization` is reserved by the default transport and should be configured through the application-owned HTTP proxy/handler if required. A send-time provider lets rotation affect queued future attempts without rewriting every persisted delivery. If a destination URL path or query string acts as a bearer credential, prefer an application-owned indirection such as a receiver identifier plus a send-time destination/credential lookup, or apply field-level protection/tokenization in the store and backup pipeline.
+
 ## Idempotent enqueue
 
 `EnqueueAsync` uses `WebhookMessage.Id` as the stable idempotency key.
@@ -50,9 +54,21 @@ Competing workers must never both receive simultaneously valid leases for the sa
 
 The concrete atomicity mechanism is intentionally left to the adapter. Transactions, conditional updates, optimistic concurrency, row/version tokens, compare-and-set operations, or storage-specific claim primitives are all valid approaches.
 
+## Authoritative clock
+
+Claim, renewal, and lease-expiration decisions must use one authoritative clock for the store's coordination boundary. `InMemoryWebhookDeliveryStore` and deterministic tests use the caller-supplied `now` value as that authority because all workers are in one process.
+
+Distributed durable stores should prefer backend/store time, such as a database server timestamp or another shared coordination clock, when deciding whether work is due or a lease has expired. If an adapter instead relies on worker-provided time, it must define and enforce a maximum skew/tolerance rule that is strong enough to prevent two workers with different clocks from owning the same delivery at the same time.
+
+Retry scheduling and terminal timestamps may use the dispatcher-supplied operation time, but a store must never let a worker's fast local clock prematurely expire another worker's active lease outside the documented authoritative-time model.
+
 ## Lease renewal and stale ownership
 
-`RenewLeaseAsync` must preserve the same lease token, must not increment `AttemptCount`, and must not shorten the currently valid lease.
+`WebhookDispatcher` renews an in-flight delivery lease while the transport attempt is still running. The renewal cadence is one half of `Dispatcher.LeaseDuration`, capped at 30 seconds, so renewal normally happens with a safety margin instead of waiting for the expiration boundary.
+
+`RenewLeaseAsync` must preserve the same lease token, must not increment `AttemptCount`, and must not shorten the currently valid lease. The returned `WebhookDeliveryLease` should reflect the current persisted expiration so callers can use the latest ownership snapshot for the final state transition.
+
+If renewal fails because ownership is stale, replaced, expired, or otherwise invalid, the dispatcher cancels the in-flight attempt when possible and does not persist success, retry, permanent-failure, or dead-letter state for that stale owner.
 
 Every state-changing operation that accepts a `WebhookDeliveryLease` must verify that:
 
@@ -115,7 +131,9 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks();
 webhooks.AddHostedDispatcher();
 ```
 
-The selected lifetime must match the adapter's own thread-safety and resource-management requirements. The ReliableWebhooks core contract does not require a particular DI lifetime.
+The selected lifetime must match the adapter's own thread-safety and resource-management requirements. The ReliableWebhooks DI integration supports singleton, scoped, and transient `IWebhookDeliveryStore` registrations. DI-created singleton services such as `IWebhookEnqueueService`, `WebhookDispatcher`, and the hosted dispatcher do not capture the store from the root provider; they resolve it inside a short-lived operation scope for each store call.
+
+Scoped and transient adapters must still coordinate through durable/shared backing state. A scoped store instance may wrap a scoped database session, unit of work, or client, but independent operation scopes must observe the same persisted deliveries, leases, and concurrency tokens.
 
 ## Delivery guarantees
 

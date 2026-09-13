@@ -24,7 +24,7 @@ public sealed class WebhookRetryPolicyOptions
     } = TimeSpan.FromSeconds(1);
 
     /// <summary>
-    /// Gets the maximum delay allowed for any scheduled retry, including Retry-After handling.
+    /// Gets the maximum delay allowed for locally generated exponential backoff and jitter.
     /// </summary>
     public TimeSpan MaxDelay
     {

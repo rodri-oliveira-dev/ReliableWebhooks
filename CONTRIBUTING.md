@@ -34,6 +34,8 @@ dotnet build --configuration Release --no-restore
 dotnet test --configuration Release --no-build
 ```
 
+The `main` branch ruleset requires the stable automated gates named `CI`, `CodeQL`, and `Dependency Review` to pass before merge. The release dry-run workflow is intentionally not a required status check because it is path-filtered to release/package-relevant changes; when it runs, failures must still be resolved before merging release-affecting work.
+
 When the change affects packaging, public metadata, symbols, or source mapping, also generate and validate the package:
 
 ```bash

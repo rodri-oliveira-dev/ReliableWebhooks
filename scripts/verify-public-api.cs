@@ -105,29 +105,30 @@ static List<string> BuildSnapshot(Assembly assembly)
         BindingFlags.DeclaredOnly;
 
     List<string> entries = [];
+    NullabilityInfoContext nullability = new();
 
-    foreach (Type type in assembly.GetTypes().Where(IsExternallyVisible).OrderBy(FormatType, StringComparer.Ordinal))
+    foreach (Type type in assembly.GetExportedTypes().Where(IsExternallyVisible).OrderBy(FormatType, StringComparer.Ordinal))
     {
         entries.Add(FormatTypeEntry(type));
 
         foreach (ConstructorInfo constructor in type.GetConstructors(declaredMembers).Where(IsVisibleMethod))
         {
-            entries.Add(FormatConstructorEntry(type, constructor));
+            entries.Add(FormatConstructorEntry(type, constructor, nullability));
         }
 
         foreach (MethodInfo method in type.GetMethods(declaredMembers).Where(IsVisibleMethod))
         {
-            entries.Add(FormatMethodEntry(type, method));
+            entries.Add(FormatMethodEntry(type, method, nullability));
         }
 
         foreach (FieldInfo field in type.GetFields(declaredMembers).Where(IsVisibleField))
         {
-            entries.Add(FormatFieldEntry(type, field));
+            entries.Add(FormatFieldEntry(type, field, nullability));
         }
 
         foreach (PropertyInfo property in type.GetProperties(declaredMembers))
         {
-            string? entry = FormatPropertyEntry(type, property);
+            string? entry = FormatPropertyEntry(type, property, nullability);
             if (entry is not null)
             {
                 entries.Add(entry);
@@ -179,12 +180,18 @@ static string FormatTypeEntry(Type type)
     return $"T:{string.Join(' ', modifiers)} {FormatType(type)} base={baseType} interfaces=[{interfaces}]{constraints}";
 }
 
-static string FormatConstructorEntry(Type declaringType, ConstructorInfo constructor)
+static string FormatConstructorEntry(
+    Type declaringType,
+    ConstructorInfo constructor,
+    NullabilityInfoContext nullability)
 {
-    return $"M:{FormatMethodModifiers(constructor)} {FormatType(declaringType)}..ctor({FormatParameters(constructor.GetParameters())})";
+    return $"M:{FormatMethodModifiers(constructor)} {FormatType(declaringType)}..ctor({FormatParameters(constructor.GetParameters(), nullability)})";
 }
 
-static string FormatMethodEntry(Type declaringType, MethodInfo method)
+static string FormatMethodEntry(
+    Type declaringType,
+    MethodInfo method,
+    NullabilityInfoContext nullability)
 {
     string genericArguments = method.IsGenericMethodDefinition
         ? $"<{string.Join(',', method.GetGenericArguments().Select(FormatType))}>"
@@ -196,11 +203,14 @@ static string FormatMethodEntry(Type declaringType, MethodInfo method)
         ? FormatGenericConstraints(method.GetGenericArguments())
         : string.Empty;
 
-    return $"M:{FormatMethodModifiers(method)} {returnModifiers}{FormatType(method.ReturnType)} " +
-        $"{FormatType(declaringType)}.{method.Name}{genericArguments}({FormatParameters(method.GetParameters())}){constraints}";
+    return $"M:{FormatMethodModifiers(method)} {returnModifiers}{FormatType(method.ReturnType)}{FormatParameterNullability(method.ReturnParameter, method.ReturnType, nullability)} " +
+        $"{FormatType(declaringType)}.{method.Name}{genericArguments}({FormatParameters(method.GetParameters(), nullability)}){constraints}";
 }
 
-static string FormatFieldEntry(Type declaringType, FieldInfo field)
+static string FormatFieldEntry(
+    Type declaringType,
+    FieldInfo field,
+    NullabilityInfoContext nullability)
 {
     List<string> modifiers = [FormatFieldAccessibility(field), field.IsStatic ? "static" : "instance"];
 
@@ -217,10 +227,13 @@ static string FormatFieldEntry(Type declaringType, FieldInfo field)
     string customModifiers = FormatCustomModifiers(field.GetRequiredCustomModifiers(), field.GetOptionalCustomModifiers());
     string constant = field.IsLiteral ? $" value={FormatConstant(field.GetRawConstantValue())}" : string.Empty;
 
-    return $"F:{string.Join(' ', modifiers)} {customModifiers}{FormatType(field.FieldType)} {FormatType(declaringType)}.{field.Name}{constant}";
+    return $"F:{string.Join(' ', modifiers)} {customModifiers}{FormatType(field.FieldType)}{FormatFieldNullability(field, field.FieldType, nullability)} {FormatType(declaringType)}.{field.Name}{constant}";
 }
 
-static string? FormatPropertyEntry(Type declaringType, PropertyInfo property)
+static string? FormatPropertyEntry(
+    Type declaringType,
+    PropertyInfo property,
+    NullabilityInfoContext nullability)
 {
     MethodInfo? getter = property.GetGetMethod(nonPublic: true);
     MethodInfo? setter = property.GetSetMethod(nonPublic: true);
@@ -242,9 +255,9 @@ static string? FormatPropertyEntry(Type declaringType, PropertyInfo property)
     }
 
     string customModifiers = FormatCustomModifiers(property.GetRequiredCustomModifiers(), property.GetOptionalCustomModifiers());
-    string indexParameters = FormatParameters(property.GetIndexParameters());
+    string indexParameters = FormatParameters(property.GetIndexParameters(), nullability);
 
-    return $"P:{customModifiers}{FormatType(property.PropertyType)} {FormatType(declaringType)}.{property.Name}" +
+    return $"P:{customModifiers}{FormatType(property.PropertyType)}{FormatPropertyNullability(property, property.PropertyType, nullability)} {FormatType(declaringType)}.{property.Name}" +
         $"[{indexParameters}] accessors=[{string.Join(',', accessors)}]";
 }
 
@@ -310,12 +323,20 @@ static string FormatAccessor(MethodInfo method)
     return $"{FormatMethodAccessibility(method)}:{(method.IsStatic ? "static" : "instance")}";
 }
 
-static string FormatParameters(IEnumerable<ParameterInfo> parameters)
+static string FormatParameters(
+    IEnumerable<ParameterInfo> parameters,
+    NullabilityInfoContext nullability)
 {
-    return string.Join(',', parameters.OrderBy(static parameter => parameter.Position).Select(FormatParameter));
+    return string.Join(
+        ',',
+        parameters
+            .OrderBy(static parameter => parameter.Position)
+            .Select(parameter => FormatParameter(parameter, nullability)));
 }
 
-static string FormatParameter(ParameterInfo parameter)
+static string FormatParameter(
+    ParameterInfo parameter,
+    NullabilityInfoContext nullability)
 {
     Type parameterType = parameter.ParameterType;
     string mode = string.Empty;
@@ -332,7 +353,98 @@ static string FormatParameter(ParameterInfo parameter)
     string optional = parameter.IsOptional ? " optional" : string.Empty;
     string defaultValue = parameter.HasDefaultValue ? $" default={FormatConstant(parameter.DefaultValue)}" : string.Empty;
 
-    return $"{mode}{customModifiers}{FormatType(parameterType)}{optional}{defaultValue}";
+    return $"{mode}{customModifiers}{FormatType(parameterType)}{FormatParameterNullability(parameter, parameterType, nullability)}{optional}{defaultValue}";
+}
+
+static string FormatParameterNullability(
+    ParameterInfo parameter,
+    Type type,
+    NullabilityInfoContext nullability)
+{
+    return FormatNullability(nullability.Create(parameter), type);
+}
+
+static string FormatFieldNullability(
+    FieldInfo field,
+    Type type,
+    NullabilityInfoContext nullability)
+{
+    return FormatNullability(nullability.Create(field), type);
+}
+
+static string FormatPropertyNullability(
+    PropertyInfo property,
+    Type type,
+    NullabilityInfoContext nullability)
+{
+    return FormatNullability(nullability.Create(property), type);
+}
+
+static string FormatNullability(NullabilityInfo info, Type type)
+{
+    Type effectiveType = type.IsByRef ? type.GetElementType()! : type;
+    if (!HasNullableSurface(effectiveType))
+    {
+        return string.Empty;
+    }
+
+    return $" nullable={FormatNullabilityInfo(info, effectiveType)}";
+}
+
+static string FormatNullabilityInfo(NullabilityInfo info, Type type)
+{
+    string state = FormatNullabilityState(info.ReadState);
+    Type effectiveType = type.IsByRef ? type.GetElementType()! : type;
+
+    if (effectiveType.IsArray)
+    {
+        NullabilityInfo? element = info.ElementType;
+        return element is null
+            ? state
+            : $"{state}[{FormatNullabilityInfo(element, effectiveType.GetElementType()!)}]";
+    }
+
+    if (effectiveType.IsGenericType)
+    {
+        NullabilityInfo[] genericArguments = info.GenericTypeArguments;
+        Type[] typeArguments = effectiveType.GetGenericArguments();
+        if (genericArguments.Length == typeArguments.Length)
+        {
+            return $"{state}<{string.Join(',', genericArguments.Zip(typeArguments, FormatNullabilityInfo))}>";
+        }
+    }
+
+    return state;
+}
+
+static bool HasNullableSurface(Type type)
+{
+    if (type.IsByRef || type.IsPointer)
+    {
+        return HasNullableSurface(type.GetElementType()!);
+    }
+
+    if (type.IsArray)
+    {
+        return true;
+    }
+
+    if (!type.IsValueType)
+    {
+        return true;
+    }
+
+    return type.IsGenericType && type.GetGenericArguments().Any(HasNullableSurface);
+}
+
+static string FormatNullabilityState(NullabilityState state)
+{
+    return state switch
+    {
+        NullabilityState.NotNull => "notnull",
+        NullabilityState.Nullable => "nullable",
+        _ => "unknown",
+    };
 }
 
 static string FormatCustomModifiers(Type[] requiredModifiers, Type[] optionalModifiers)
@@ -560,6 +672,14 @@ internal sealed class SnapshotLoadContext : AssemblyLoadContext
         if (File.Exists(localCandidate))
         {
   return LoadFromAssemblyPath(localCandidate);
+        }
+
+        if (assemblyName.Name.StartsWith("System.", StringComparison.Ordinal)
+            || string.Equals(assemblyName.Name, "System", StringComparison.Ordinal)
+            || string.Equals(assemblyName.Name, "mscorlib", StringComparison.Ordinal)
+            || string.Equals(assemblyName.Name, "netstandard", StringComparison.Ordinal))
+        {
+  return null;
         }
 
         string packageRoot = Path.Combine(

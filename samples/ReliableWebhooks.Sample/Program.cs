@@ -41,6 +41,7 @@ internal static class Program
             options.Transport = new WebhookHttpTransportOptions
             {
                 AttemptTimeout = TimeSpan.FromSeconds(3),
+                AllowInsecureHttp = true,
             };
         });
 

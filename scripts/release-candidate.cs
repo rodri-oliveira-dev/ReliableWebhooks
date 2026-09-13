@@ -35,10 +35,12 @@ static int WriteManifest(string[] args)
         "--commit",
         "--package-id",
         "--package",
+        "--symbols",
         "--output",
         "--checksums-output");
 
     var packagePath = Path.GetFullPath(options["--package"]);
+    var symbolsPath = Path.GetFullPath(options["--symbols"]);
     var manifestPath = Path.GetFullPath(options["--output"]);
     var checksumsPath = Path.GetFullPath(options["--checksums-output"]);
 
@@ -47,14 +49,22 @@ static int WriteManifest(string[] args)
         throw new FileNotFoundException("Release package was not found.", packagePath);
     }
 
+    if (!File.Exists(symbolsPath))
+    {
+        throw new FileNotFoundException("Release symbol package was not found.", symbolsPath);
+    }
+
     var packageHash = ComputeSha256(packagePath);
+    var symbolsHash = ComputeSha256(symbolsPath);
     var manifest = new ReleaseManifest(
         options["--version"],
         options["--tag"],
         options["--commit"],
         options["--package-id"],
         Path.GetFileName(packagePath),
-        packageHash);
+        packageHash,
+        Path.GetFileName(symbolsPath),
+        symbolsHash);
 
     Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
     Directory.CreateDirectory(Path.GetDirectoryName(checksumsPath)!);
@@ -70,6 +80,7 @@ static int WriteManifest(string[] args)
         new[]
         {
             $"{packageHash}  {Path.GetFileName(packagePath)}",
+            $"{symbolsHash}  {Path.GetFileName(symbolsPath)}",
             $"{manifestHash}  {Path.GetFileName(manifestPath)}"
         });
 
@@ -87,16 +98,23 @@ static int VerifyCandidate(string[] args)
         "--commit",
         "--package-id",
         "--package",
+        "--symbols",
         "--manifest",
         "--checksums");
 
     var packagePath = Path.GetFullPath(options["--package"]);
+    var symbolsPath = Path.GetFullPath(options["--symbols"]);
     var manifestPath = Path.GetFullPath(options["--manifest"]);
     var checksumsPath = Path.GetFullPath(options["--checksums"]);
 
     if (!File.Exists(packagePath))
     {
         throw new FileNotFoundException("Release package was not found.", packagePath);
+    }
+
+    if (!File.Exists(symbolsPath))
+    {
+        throw new FileNotFoundException("Release symbol package was not found.", symbolsPath);
     }
 
     if (!File.Exists(manifestPath))
@@ -119,12 +137,16 @@ static int VerifyCandidate(string[] args)
     AssertEqual(options["--commit"], manifest.Commit, "manifest commit");
     AssertEqual(options["--package-id"], manifest.PackageId, "manifest packageId");
     AssertEqual(Path.GetFileName(packagePath), manifest.PackageFileName, "manifest packageFileName");
+    AssertEqual(Path.GetFileName(symbolsPath), manifest.SymbolsFileName, "manifest symbolsFileName");
 
     var packageHash = ComputeSha256(packagePath);
+    var symbolsHash = ComputeSha256(symbolsPath);
     AssertEqual(packageHash, manifest.PackageSha256, "manifest packageSha256");
+    AssertEqual(symbolsHash, manifest.SymbolsSha256, "manifest symbolsSha256");
 
     var checksums = ParseChecksums(checksumsPath);
     AssertChecksum(checksums, packagePath, packageHash);
+    AssertChecksum(checksums, symbolsPath, symbolsHash);
     AssertChecksum(checksums, manifestPath, ComputeSha256(manifestPath));
 
     Console.WriteLine($"Release candidate verified: {Path.GetFileName(packagePath)}");
@@ -224,11 +246,11 @@ static void PrintUsage()
     Console.Error.WriteLine(
         "Usage: dotnet run --file scripts/release-candidate.cs -- manifest "
         + "--version <version> --tag <tag> --commit <sha> --package-id <id> "
-        + "--package <nupkg> --output <manifest> --checksums-output <SHA256SUMS>");
+        + "--package <nupkg> --symbols <snupkg> --output <manifest> --checksums-output <SHA256SUMS>");
     Console.Error.WriteLine(
         "   or: dotnet run --file scripts/release-candidate.cs -- verify "
         + "--version <version> --tag <tag> --commit <sha> --package-id <id> "
-        + "--package <nupkg> --manifest <manifest> --checksums <SHA256SUMS>");
+        + "--package <nupkg> --symbols <snupkg> --manifest <manifest> --checksums <SHA256SUMS>");
 }
 
 public sealed record ReleaseManifest(
@@ -237,7 +259,9 @@ public sealed record ReleaseManifest(
     string Commit,
     string PackageId,
     string PackageFileName,
-    string PackageSha256);
+    string PackageSha256,
+    string SymbolsFileName,
+    string SymbolsSha256);
 
 [JsonSourceGenerationOptions(
     WriteIndented = true,

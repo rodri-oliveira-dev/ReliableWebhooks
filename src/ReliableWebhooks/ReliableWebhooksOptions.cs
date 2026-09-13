@@ -24,6 +24,15 @@ public sealed class ReliableWebhooksOptions
     } = new();
 
     /// <summary>
+    /// Gets or sets message resource limits enforced by the standard enqueue integration before persistence.
+    /// </summary>
+    public WebhookMessageLimits MessageLimits
+    {
+        get;
+        set;
+    } = new();
+
+    /// <summary>
     /// Gets or sets the HTTP transport and request-signing options.
     /// </summary>
     public WebhookHttpTransportOptions Transport

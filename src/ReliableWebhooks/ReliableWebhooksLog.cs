@@ -43,4 +43,12 @@ internal static partial class ReliableWebhooksLog
         string eventType,
         int attempt,
         string exceptionType);
+
+    [LoggerMessage(1011, LogLevel.Warning, "Webhook {WebhookId} with event type {EventType} lease renewal failed during attempt {Attempt} with exception type {ExceptionType}.")]
+    internal static partial void LeaseRenewalFailed(
+        ILogger logger,
+        string webhookId,
+        string eventType,
+        int attempt,
+        string exceptionType);
 }

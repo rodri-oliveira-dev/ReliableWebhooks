@@ -82,4 +82,40 @@ public static class ReliableWebhooksInstrumentation
         DeliveryDurationMetricName,
         unit: "ms",
         description: "Duration of webhook delivery attempts in milliseconds.");
+
+    internal static TagList CreateEventTypeMetricTags(
+        WebhookMetricsOptions options,
+        string eventType)
+    {
+        TagList tags = default;
+        string? boundedEventType = ResolveMetricEventType(options, eventType);
+
+        if (boundedEventType is not null)
+        {
+            tags.Add(EventTypeTagName, boundedEventType);
+        }
+
+        return tags;
+    }
+
+    private static string? ResolveMetricEventType(
+        WebhookMetricsOptions options,
+        string eventType)
+    {
+        IReadOnlySet<string>? allowList = options.EventTypeTagAllowList;
+
+        if (allowList is null || allowList.Count == 0)
+        {
+            return null;
+        }
+
+        if (allowList.Contains(eventType))
+        {
+            return eventType;
+        }
+
+        return string.IsNullOrWhiteSpace(options.UnknownEventTypeTagValue)
+            ? null
+            : options.UnknownEventTypeTagValue;
+    }
 }

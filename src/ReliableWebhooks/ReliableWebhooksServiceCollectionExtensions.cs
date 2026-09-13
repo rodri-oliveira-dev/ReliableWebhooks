@@ -50,10 +50,12 @@ public static class ReliableWebhooksServiceCollectionExtensions
 
         IHttpClientBuilder httpClientBuilder = services
             .AddHttpClient(DefaultHttpClientName)
+            .RemoveAllLoggers()
             .ConfigureHttpClient(static client => client.Timeout = Timeout.InfiniteTimeSpan)
             .ConfigurePrimaryHttpMessageHandler(static () => new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
+                UseCookies = false,
             });
 
         return new ReliableWebhooksBuilder(services, httpClientBuilder);
@@ -73,26 +75,28 @@ public static class ReliableWebhooksServiceCollectionExtensions
         IWebhookHttpResponseClassifier classifier =
             serviceProvider.GetRequiredService<IWebhookHttpResponseClassifier>();
         IWebhookRequestSigner? signer = serviceProvider.GetService<IWebhookRequestSigner>();
+        IWebhookRequestHeaderProvider? headerProvider = serviceProvider.GetService<IWebhookRequestHeaderProvider>();
 
         return new HttpClientFactoryWebhookDeliveryTransport(
             httpClientFactory,
             DefaultHttpClientName,
             classifier,
             options.Transport,
-            signer);
+            signer,
+            headerProvider);
     }
 
     private static IWebhookEnqueueService CreateEnqueueService(IServiceProvider serviceProvider)
     {
         ReliableWebhooksOptions options = GetOptions(serviceProvider);
-        IWebhookDeliveryStore store = serviceProvider.GetRequiredService<IWebhookDeliveryStore>();
-        return new WebhookEnqueueService(store, options.Dispatcher.TimeProvider);
+        IWebhookDeliveryStore store = CreateScopedStore(serviceProvider);
+        return new WebhookEnqueueService(store, options.Dispatcher.TimeProvider, options.MessageLimits);
     }
 
     private static WebhookDispatcher CreateDispatcher(IServiceProvider serviceProvider)
     {
         ReliableWebhooksOptions options = GetOptions(serviceProvider);
-        IWebhookDeliveryStore store = serviceProvider.GetRequiredService<IWebhookDeliveryStore>();
+        IWebhookDeliveryStore store = CreateScopedStore(serviceProvider);
         IWebhookDeliveryTransport transport = serviceProvider.GetRequiredService<IWebhookDeliveryTransport>();
         IWebhookRetryPolicy retryPolicy = serviceProvider.GetRequiredService<IWebhookRetryPolicy>();
         IWebhookDispatcherDelay? delay = serviceProvider.GetService<IWebhookDispatcherDelay>();
@@ -106,6 +110,12 @@ public static class ReliableWebhooksServiceCollectionExtensions
             options.Dispatcher,
             delay,
             logger);
+    }
+
+    private static IWebhookDeliveryStore CreateScopedStore(IServiceProvider serviceProvider)
+    {
+        IServiceScopeFactory scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+        return new ScopedWebhookDeliveryStore(scopeFactory);
     }
 
     private static ReliableWebhooksOptions GetOptions(IServiceProvider serviceProvider)

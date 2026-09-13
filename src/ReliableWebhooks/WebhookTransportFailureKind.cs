@@ -19,4 +19,14 @@ public enum WebhookTransportFailureKind
     /// The delivery attempt exceeded its configured timeout before a usable HTTP response was received.
     /// </summary>
     Timeout = 2,
+
+    /// <summary>
+    /// The configured destination policy denied the outbound request before it was sent.
+    /// </summary>
+    DestinationPolicyDenied = 3,
+
+    /// <summary>
+    /// The transport rejected a plaintext HTTP destination because insecure HTTP was not explicitly allowed.
+    /// </summary>
+    InsecureHttpDenied = 4,
 }

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 
 namespace ReliableWebhooks;
 
@@ -19,11 +20,31 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
 {
     private const int ReadBufferSize = 8 * 1024;
 
+    private static readonly HashSet<string> TransportControlledHeaderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Connection",
+        "Content-Length",
+        "Content-Type",
+        "Expect",
+        "Host",
+        "Keep-Alive",
+        "Proxy-Authenticate",
+        "Proxy-Authorization",
+        "Proxy-Connection",
+        "TE",
+        "Trailer",
+        "Transfer-Encoding",
+        "Upgrade",
+    };
+
     private readonly HttpClient httpClient;
     private readonly IWebhookHttpResponseClassifier classifier;
     private readonly TimeSpan attemptTimeout;
     private readonly int maxResponseBodyBytes;
+    private readonly bool allowInsecureHttp;
+    private readonly IWebhookDestinationPolicy? destinationPolicy;
     private readonly IWebhookRequestSigner? signer;
+    private readonly IWebhookRequestHeaderProvider? headerProvider;
     private readonly WebhookSigningOptions signingOptions;
 
     /// <summary>
@@ -70,6 +91,35 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         IWebhookHttpResponseClassifier? classifier,
         WebhookHttpTransportOptions? options,
         IWebhookRequestSigner? signer)
+        : this(httpClient, classifier, options, signer, headerProvider: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="WebhookHttpTransport"/> class.
+    /// </summary>
+    /// <param name="httpClient">
+    /// The HTTP client used to send webhook requests. Its primary handler must have automatic redirects disabled.
+    /// </param>
+    /// <param name="classifier">A classifier that overrides the default HTTP status classification, or <see langword="null"/>.</param>
+    /// <param name="options">Transport settings, or <see langword="null"/> to use defaults.</param>
+    /// <param name="signer">A request signer, or <see langword="null"/> to disable signing.</param>
+    /// <param name="headerProvider">
+    /// A provider for request headers resolved immediately before each send attempt, or <see langword="null"/>.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="httpClient"/> is <see langword="null"/>, or signing options contain a null time provider.
+    /// </exception>
+    /// <exception cref="ArgumentException">Configured signing header names are empty or duplicated.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// The configured timeout is invalid or the response-body byte limit is negative.
+    /// </exception>
+    public WebhookHttpTransport(
+        HttpClient httpClient,
+        IWebhookHttpResponseClassifier? classifier,
+        WebhookHttpTransportOptions? options,
+        IWebhookRequestSigner? signer,
+        IWebhookRequestHeaderProvider? headerProvider)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
 
@@ -102,7 +152,10 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         this.classifier = classifier ?? new DefaultWebhookHttpResponseClassifier();
         attemptTimeout = options.AttemptTimeout;
         maxResponseBodyBytes = options.MaxResponseBodyBytes;
+        allowInsecureHttp = options.AllowInsecureHttp;
+        destinationPolicy = options.DestinationPolicy;
         this.signer = signer;
+        this.headerProvider = headerProvider;
         signingOptions = options.Signing;
     }
 
@@ -124,12 +177,30 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         ArgumentNullException.ThrowIfNull(message);
         cancellationToken.ThrowIfCancellationRequested();
 
-        byte[] payload = message.Payload.ToArray();
+        ReadOnlyMemory<byte> payload = message.PayloadBuffer;
         using CancellationTokenSource? timeoutSource = CreateTimeoutSource(cancellationToken);
         CancellationToken attemptToken = timeoutSource?.Token ?? cancellationToken;
 
         try
         {
+            if (!allowInsecureHttp
+                && string.Equals(message.Destination.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            {
+                return WebhookDeliveryResult.InsecureHttpDenied();
+            }
+
+            if (destinationPolicy is not null)
+            {
+                WebhookDestinationPolicyResult destinationAuthorization = await destinationPolicy
+                    .AuthorizeAsync(message.Destination, attemptToken)
+                    .ConfigureAwait(false);
+
+                if (!destinationAuthorization.IsAllowed)
+                {
+                    return WebhookDeliveryResult.DestinationPolicyDenied();
+                }
+            }
+
             using HttpRequestMessage request = await CreateRequestAsync(
                 message,
                 payload,
@@ -169,6 +240,10 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         {
             return WebhookDeliveryResult.NetworkFailure();
         }
+        catch (SocketException)
+        {
+            return WebhookDeliveryResult.NetworkFailure();
+        }
     }
 
     private static void ValidateSigningOptions(WebhookSigningOptions options)
@@ -195,15 +270,15 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
 
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
         WebhookMessage message,
-        byte[] payload,
+        ReadOnlyMemory<byte> payload,
         CancellationToken cancellationToken)
     {
         HttpRequestMessage request = new(HttpMethod.Post, message.Destination);
 
         try
         {
-            ByteArrayContent content = new(payload);
-            _ = content.Headers.TryAddWithoutValidation("Content-Type", message.ContentType);
+            ReadOnlyMemoryContent content = new(payload);
+            AddContentType(content, message.ContentType);
             request.Content = content;
 
             foreach ((string name, string value) in message.Headers)
@@ -213,10 +288,23 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
                     continue;
                 }
 
-                if (!request.Headers.TryAddWithoutValidation(name, value)
-                    && !content.Headers.TryAddWithoutValidation(name, value))
+                AddCustomHeader(request, content, name, value);
+            }
+
+            if (headerProvider is not null)
+            {
+                IReadOnlyDictionary<string, string> headers = await headerProvider
+                    .GetHeadersAsync(message, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (headers is null)
                 {
-                    throw new InvalidOperationException($"The custom header '{name}' could not be applied to the HTTP request.");
+                    throw new InvalidOperationException("The configured webhook request header provider returned null.");
+                }
+
+                foreach ((string name, string value) in headers)
+                {
+                    AddProviderHeader(request, name, value);
                 }
             }
 
@@ -251,6 +339,37 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         }
     }
 
+    private static void AddProviderHeader(
+        HttpRequestMessage request,
+        string name,
+        string value)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        if (TransportControlledHeaderNames.Contains(name))
+        {
+            throw new InvalidOperationException($"The dynamic webhook header '{name}' is reserved by the default transport.");
+        }
+
+        if (value is null)
+        {
+            throw new InvalidOperationException($"The dynamic webhook header '{name}' value cannot be null.");
+        }
+
+        try
+        {
+            request.Headers.Add(name, value);
+        }
+        catch (InvalidOperationException)
+        {
+            throw new InvalidOperationException($"The dynamic webhook header '{name}' is not a supported request header.");
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException($"The dynamic webhook header '{name}' value is not valid for HTTP.");
+        }
+    }
+
     private static void ApplyGeneratedHeader(
         HttpRequestMessage request,
         HttpContent content,
@@ -260,9 +379,55 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         _ = request.Headers.Remove(name);
         _ = content.Headers.Remove(name);
 
-        if (!request.Headers.TryAddWithoutValidation(name, value))
+        try
+        {
+            request.Headers.Add(name, value);
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidOperationException)
         {
             throw new InvalidOperationException($"The generated webhook header '{name}' could not be applied to the HTTP request.");
+        }
+    }
+
+    private static void AddContentType(HttpContent content, string contentType)
+    {
+        try
+        {
+            content.Headers.Add("Content-Type", contentType);
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidOperationException)
+        {
+            throw new InvalidOperationException("The webhook content type could not be applied to the HTTP request.");
+        }
+    }
+
+    private static void AddCustomHeader(
+        HttpRequestMessage request,
+        HttpContent content,
+        string name,
+        string value)
+    {
+        try
+        {
+            request.Headers.Add(name, value);
+            return;
+        }
+        catch (InvalidOperationException)
+        {
+            // The header is valid but belongs to content rather than the request envelope.
+        }
+        catch (FormatException)
+        {
+            throw new InvalidOperationException($"The custom header '{name}' value is not valid for HTTP.");
+        }
+
+        try
+        {
+            content.Headers.Add(name, value);
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidOperationException)
+        {
+            throw new InvalidOperationException($"The custom header '{name}' could not be applied to the HTTP request.");
         }
     }
 

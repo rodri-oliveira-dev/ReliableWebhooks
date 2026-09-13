@@ -45,8 +45,10 @@ var nuspec = XDocument.Load(nuspecStream);
 var ns = nuspec.Root!.Name.Namespace;
 var metadata = nuspec.Root.Element(ns + "metadata")
     ?? throw new InvalidOperationException("Metadados do .nuspec não encontrados.");
+var packageId = metadata.Element(ns + "id")?.Value;
+var packageVersion = metadata.Element(ns + "version")?.Value;
 
-AssertEqual("ReliableWebhooks", metadata.Element(ns + "id")?.Value, "PackageId");
+AssertEqual("ReliableWebhooks", packageId, "PackageId");
 AssertNotBlank(metadata.Element(ns + "title")?.Value, "Title");
 AssertNotBlank(metadata.Element(ns + "authors")?.Value, "Authors");
 AssertNotBlank(metadata.Element(ns + "description")?.Value, "Description");
@@ -62,7 +64,7 @@ AssertDeprecatedMetadataAbsent(metadata, ns);
 
 if (!string.IsNullOrWhiteSpace(expectedVersion))
 {
-    AssertEqual(expectedVersion, metadata.Element(ns + "version")?.Value, "Version");
+    AssertEqual(expectedVersion, packageVersion, "Version");
 }
 
 var readmeEntry = packageArchive.GetEntry("README.md")
@@ -134,6 +136,19 @@ if (requireSourceLink)
 }
 
 using var symbolsArchive = ZipFile.OpenRead(snupkg);
+var symbolsNuspecEntry = symbolsArchive.Entries.Single(entry =>
+    entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase));
+using (var symbolsNuspecStream = symbolsNuspecEntry.Open())
+{
+    var symbolsNuspec = XDocument.Load(symbolsNuspecStream);
+    var symbolsNs = symbolsNuspec.Root!.Name.Namespace;
+    var symbolsMetadata = symbolsNuspec.Root.Element(symbolsNs + "metadata")
+        ?? throw new InvalidOperationException("Metadados do .nuspec não encontrados no .snupkg.");
+
+    AssertEqual(packageId!, symbolsMetadata.Element(symbolsNs + "id")?.Value, "Symbols PackageId");
+    AssertEqual(packageVersion!, symbolsMetadata.Element(symbolsNs + "version")?.Value, "Symbols Version");
+}
+
 var pdbEntry = symbolsArchive.GetEntry("lib/net10.0/ReliableWebhooks.pdb")
     ?? throw new InvalidOperationException("PDB não encontrado no .snupkg.");
 
