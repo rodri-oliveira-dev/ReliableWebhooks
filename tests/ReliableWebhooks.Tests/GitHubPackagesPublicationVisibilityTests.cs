@@ -208,7 +208,9 @@ public sealed class GitHubPackagesPublicationVisibilityTests
         {
             if (Directory.Exists(Path))
             {
-                Directory.Delete(Path, recursive: true);
+                Directory.Delete(
+                    Path,
+                    recursive: true);
             }
         }
     }
