@@ -224,7 +224,11 @@ static string ComputePackageContentSha256(byte[] packageBytes)
 
 static bool IsRepositorySignatureEntry(string entryName)
 {
-    return string.Equals(entryName, ".signature.p7s", StringComparison.OrdinalIgnoreCase);
+    string normalized = entryName.Replace('\\', '/');
+    return string.Equals(normalized, "[Content_Types].xml", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(normalized, "_rels/.rels", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(normalized, ".signature.p7s", StringComparison.OrdinalIgnoreCase)
+        || normalized.StartsWith("package/services/digital-signature/", StringComparison.OrdinalIgnoreCase);
 }
 
 static bool IsDirectoryEntry(ZipArchiveEntry entry)

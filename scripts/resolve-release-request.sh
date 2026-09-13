@@ -3,19 +3,17 @@ set -euo pipefail
 
 event_name="${EVENT_NAME:-}"
 requested_version="${REQUESTED_VERSION:-${MANUAL_VERSION:-}}"
-publish_requested="${PUBLISH_REQUESTED:-false}"
-
-if [[ "$publish_requested" != "true" && "$publish_requested" != "false" ]]; then
-  echo "::error::PUBLISH_REQUESTED must be 'true' or 'false', got '$publish_requested'."
-  exit 1
-fi
 
 case "$event_name" in
   pull_request)
     should_publish=false
     ;;
   workflow_dispatch)
-    should_publish="$publish_requested"
+    should_publish=true
+    if [[ "${GITHUB_REF:-}" != 'refs/heads/main' ]]; then
+      echo "::error::Official releases must be started from refs/heads/main. Current ref: ${GITHUB_REF:-<unset>}."
+      exit 1
+    fi
     ;;
   *)
     echo "::error::Unsupported release event '$event_name'."

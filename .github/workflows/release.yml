@@ -1,6 +1,6 @@
 name: Release
 
-run-name: "Release ${{ inputs.version || 'dry-run' }} from ${{ github.ref_name }} (${{ inputs.publish && 'publish' || 'validation' }})"
+run-name: "Release ${{ inputs.version || 'dry-run' }} from ${{ github.ref_name }}"
 
 on:
   pull_request:
@@ -8,6 +8,8 @@ on:
       - main
     paths:
       - .github/workflows/release.yml
+      - scripts/ensure-release-tag.sh
+      - scripts/publish-release-package.cs
       - scripts/release-candidate.cs
       - scripts/resolve-release-request.sh
       - scripts/resolve-nuget-publishing.sh
@@ -17,6 +19,7 @@ on:
       - scripts/verify-registry-package.cs
       - src/ReliableWebhooks/PublicApi.v1.0.0.txt
       - docs/release-v1.0.0.md
+      - docs/release-v1.0.0.pt-BR.md
       - src/**
       - tests/**
       - Directory.Build.props
@@ -30,41 +33,36 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact Semantic Version to validate or publish (for example 1.0.0 or 1.1.0-beta.1).
+        description: Semantic version without the v prefix, for example 1.0.0 or 1.1.0-beta.1.
         required: true
         type: string
-      publish:
-        description: Publish the validated package to GitHub Packages and GitHub Release, plus NuGet.org when Trusted Publishing is configured.
-        required: true
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: "release-${{ github.ref }}"
+  group: release
   cancel-in-progress: false
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
+  CI: "true"
 
 jobs:
-  build:
-    name: Build release candidate
+  build-and-pack:
+    name: Validate, build, test and pack
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     outputs:
-      version: "${{ steps.release-metadata.outputs.version }}"
-      tag: "${{ steps.release-metadata.outputs.tag }}"
-      is-prerelease: "${{ steps.release-metadata.outputs.is_prerelease }}"
-      commit: "${{ steps.release-commit.outputs.commit }}"
-      package-id: "${{ steps.package.outputs.package_id }}"
-      nuget-publishing-enabled: "${{ steps.nuget-publishing.outputs.nuget_publishing_enabled }}"
-      nuget-publishing-reason: "${{ steps.nuget-publishing.outputs.nuget_publishing_reason }}"
+      version: ${{ steps.release-metadata.outputs.version }}
+      tag: ${{ steps.release-metadata.outputs.tag }}
+      is-prerelease: ${{ steps.release-metadata.outputs.is_prerelease }}
+      commit: ${{ steps.release-commit.outputs.commit }}
+      package-id: ${{ steps.package.outputs.package_id }}
+      artifact-name: ${{ steps.release-artifact.outputs.artifact_name }}
 
     steps:
       - name: Checkout repository
@@ -84,31 +82,12 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_VERSION: ${{ inputs.version || format('0.0.0-ci.{0}', github.run_number) }}
-          PUBLISH_REQUESTED: ${{ inputs.publish || false }}
         run: bash scripts/resolve-release-request.sh
 
       - name: Record validated commit
         id: release-commit
-        run: echo "commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
-      - name: Preflight release tag
-        if: "${{ github.event_name == 'workflow_dispatch' && inputs.publish }}"
         shell: bash
-        env:
-          RELEASE_TAG: ${{ steps.release-metadata.outputs.tag }}
-          VALIDATED_SHA: ${{ steps.release-commit.outputs.commit }}
-        run: |
-          set -euo pipefail
-
-          git fetch --force --tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}" || true
-
-          if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
-            existing_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
-            if [[ "${existing_commit}" != "${VALIDATED_SHA}" ]]; then
-              echo "Tag ${RELEASE_TAG} already points to ${existing_commit}, not validated SHA ${VALIDATED_SHA}." >&2
-              exit 2
-            fi
-          fi
+        run: echo "commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Restore local tools
         run: dotnet tool restore
@@ -138,13 +117,26 @@ jobs:
 
           echo "package_id=$package_id" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve NuGet publishing opt-in
-        id: nuget-publishing
+      - name: Preflight release tag
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         env:
-          SHOULD_PUBLISH: ${{ steps.release-metadata.outputs.should_publish }}
-          NUGET_USER: ${{ vars.NUGET_USER }}
-        run: bash scripts/resolve-nuget-publishing.sh
+          RELEASE_TAG: ${{ steps.release-metadata.outputs.tag }}
+          VALIDATED_SHA: ${{ steps.release-commit.outputs.commit }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/${RELEASE_TAG}" >/dev/null; then
+            existing_sha="$(git rev-list -n 1 "${RELEASE_TAG}")"
+            if [[ "${existing_sha}" != "${VALIDATED_SHA}" ]]; then
+              echo "Tag ${RELEASE_TAG} points to ${existing_sha}, not validated SHA ${VALIDATED_SHA}." >&2
+              exit 2
+            fi
+            echo "Tag ${RELEASE_TAG} already points to the validated commit; publication can be resumed."
+          else
+            echo "Tag ${RELEASE_TAG} does not currently exist."
+          fi
 
       - name: Validate resolved MSBuild version
         shell: bash
@@ -179,14 +171,14 @@ jobs:
           --no-restore
           -p:Version="$RELEASE_VERSION"
 
+      - name: Run tests
+        run: dotnet test ReliableWebhooks.slnx --configuration Release --no-build
+
       - name: Verify public API snapshot
         run: >-
           dotnet run --file scripts/verify-public-api.cs --
           src/ReliableWebhooks/bin/Release/net10.0/ReliableWebhooks.dll
           src/ReliableWebhooks/PublicApi.v1.0.0.txt
-
-      - name: Run tests
-        run: dotnet test ReliableWebhooks.slnx --configuration Release --no-build
 
       - name: Pack release package
         env:
@@ -227,62 +219,210 @@ jobs:
           --output artifacts/release/release-manifest.json
           --checksums-output artifacts/release/SHA256SUMS
 
+      - name: Record release artifact name
+        id: release-artifact
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release-metadata.outputs.version }}
+        run: echo "artifact_name=release-candidate-${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Upload validated release candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: "release-candidate-${{ steps.release-metadata.outputs.version }}"
+          name: ${{ steps.release-artifact.outputs.artifact_name }}
           path: artifacts/release
           if-no-files-found: error
           retention-days: 14
 
-  publish:
-    name: Publish official release
-    if: "${{ github.event_name == 'workflow_dispatch' && inputs.publish }}"
-    needs: build
+  ensure-release-tag:
+    name: Create or verify release tag
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: build-and-pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag-created: ${{ steps.release-tag.outputs.tag_created }}
+
+    steps:
+      - name: Checkout validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build-and-pack.outputs.commit }}
+          fetch-depth: 0
+
+      - name: Create or verify tag
+        id: release-tag
+        shell: bash
+        run: >-
+          bash scripts/ensure-release-tag.sh
+          --tag "${{ needs.build-and-pack.outputs.tag }}"
+          --sha "${{ needs.build-and-pack.outputs.commit }}"
+
+  publish-nuget:
+    name: Publish to NuGet.org
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs:
+      - build-and-pack
+      - ensure-release-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Download validated release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build-and-pack.outputs.artifact-name }}
+          path: artifacts/release
+
+      - name: Verify downloaded release candidate
+        env:
+          RELEASE_VERSION: ${{ needs.build-and-pack.outputs.version }}
+          RELEASE_TAG: ${{ needs.build-and-pack.outputs.tag }}
+          PACKAGE_ID: ${{ needs.build-and-pack.outputs.package-id }}
+        run: >-
+          dotnet run --file scripts/release-candidate.cs -- verify
+          --version "$RELEASE_VERSION"
+          --tag "$RELEASE_TAG"
+          --commit "${{ needs.build-and-pack.outputs.commit }}"
+          --package-id "$PACKAGE_ID"
+          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --symbols "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
+          --manifest artifacts/release/release-manifest.json
+          --checksums artifacts/release/SHA256SUMS
+
+      - name: Validate NuGet.org Trusted Publishing configuration
+        shell: bash
+        env:
+          SHOULD_PUBLISH: "true"
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: bash scripts/resolve-nuget-publishing.sh
+
+      - name: Authenticate to NuGet.org with Trusted Publishing
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Publish validated package to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          NUGET_USER: ${{ vars.NUGET_USER }}
+          PACKAGE_ID: ${{ needs.build-and-pack.outputs.package-id }}
+          RELEASE_VERSION: ${{ needs.build-and-pack.outputs.version }}
+        run: >-
+          dotnet run --file scripts/publish-release-package.cs --
+          --registry NuGetOrg
+          --source https://api.nuget.org/v3/index.json
+          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --symbols "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
+          --package-id "$PACKAGE_ID"
+          --version "$RELEASE_VERSION"
+          --api-key-env NUGET_API_KEY
+          --nuget-user-env NUGET_USER
+          --convergence-attempts 60
+          --convergence-delay-seconds 10
+
+  publish-github-packages:
+    name: Publish to GitHub Packages
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs:
+      - build-and-pack
+      - ensure-release-tag
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release
     permissions:
-      contents: write
+      contents: read
       packages: write
+
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Download validated release candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build-and-pack.outputs.artifact-name }}
+          path: artifacts/release
+
+      - name: Verify downloaded release candidate
+        env:
+          RELEASE_VERSION: ${{ needs.build-and-pack.outputs.version }}
+          RELEASE_TAG: ${{ needs.build-and-pack.outputs.tag }}
+          PACKAGE_ID: ${{ needs.build-and-pack.outputs.package-id }}
+        run: >-
+          dotnet run --file scripts/release-candidate.cs -- verify
+          --version "$RELEASE_VERSION"
+          --tag "$RELEASE_TAG"
+          --commit "${{ needs.build-and-pack.outputs.commit }}"
+          --package-id "$PACKAGE_ID"
+          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --symbols "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
+          --manifest artifacts/release/release-manifest.json
+          --checksums artifacts/release/SHA256SUMS
+
+      - name: Publish validated package to GitHub Packages
+        env:
+          GITHUB_PACKAGES_TOKEN: ${{ github.token }}
+          PACKAGE_ID: ${{ needs.build-and-pack.outputs.package-id }}
+          RELEASE_VERSION: ${{ needs.build-and-pack.outputs.version }}
+          GITHUB_PACKAGES_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+        run: >-
+          dotnet run --file scripts/publish-release-package.cs --
+          --registry GitHubPackages
+          --source "$GITHUB_PACKAGES_SOURCE"
+          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --package-id "$PACKAGE_ID"
+          --version "$RELEASE_VERSION"
+          --api-key-env GITHUB_PACKAGES_TOKEN
+          --username "${{ github.repository_owner }}"
+          --token-env GITHUB_PACKAGES_TOKEN
+          --convergence-attempts 12
+          --convergence-delay-seconds 10
+
+  github-release:
+    name: Publish GitHub Release
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs:
+      - build-and-pack
+      - ensure-release-tag
+      - publish-nuget
+      - publish-github-packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
       id-token: write
       attestations: write
       artifact-metadata: write
 
     steps:
-      - name: Validate protected publication request
-        env:
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-          RELEASE_TAG: ${{ needs.build.outputs.tag }}
-          VALIDATED_SHA: ${{ needs.build.outputs.commit }}
-          NUGET_PUBLISHING_ENABLED: ${{ needs.build.outputs.nuget-publishing-enabled }}
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Official publication is allowed only from refs/heads/main." >&2
-            exit 2
-          fi
-
-          expected_tag="v${RELEASE_VERSION}"
-          if [[ "$RELEASE_TAG" != "$expected_tag" ]]; then
-            echo "Resolved release tag must be exactly '${expected_tag}'." >&2
-            exit 2
-          fi
-
-          if [[ "$NUGET_PUBLISHING_ENABLED" != "true" ]]; then
-            echo "NuGet.org publication is disabled because NUGET_USER is not configured; GitHub outputs remain enabled."
-          fi
-
-          if [[ "$VALIDATED_SHA" != "$GITHUB_SHA" ]]; then
-            echo "Build validated ${VALIDATED_SHA}, but publish is running for ${GITHUB_SHA}." >&2
-            exit 2
-          fi
-
-      - name: Checkout exact release commit
+      - name: Checkout release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: "${{ needs.build.outputs.commit }}"
+          ref: ${{ needs.build-and-pack.outputs.commit }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -294,194 +434,52 @@ jobs:
       - name: Download validated release candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: "release-candidate-${{ needs.build.outputs.version }}"
+          name: ${{ needs.build-and-pack.outputs.artifact-name }}
           path: artifacts/release
 
       - name: Verify downloaded release candidate
         env:
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-          RELEASE_TAG: ${{ needs.build.outputs.tag }}
-          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
+          RELEASE_VERSION: ${{ needs.build-and-pack.outputs.version }}
+          RELEASE_TAG: ${{ needs.build-and-pack.outputs.tag }}
+          PACKAGE_ID: ${{ needs.build-and-pack.outputs.package-id }}
         run: >-
           dotnet run --file scripts/release-candidate.cs -- verify
           --version "$RELEASE_VERSION"
           --tag "$RELEASE_TAG"
-          --commit "${{ needs.build.outputs.commit }}"
+          --commit "${{ needs.build-and-pack.outputs.commit }}"
           --package-id "$PACKAGE_ID"
           --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
           --symbols "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
           --manifest artifacts/release/release-manifest.json
           --checksums artifacts/release/SHA256SUMS
 
-      - name: Preflight NuGet.org package identity
-        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
-        id: nuget-registry-preflight
-        env:
-          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-        run: >-
-          dotnet run --file scripts/verify-registry-package.cs --
-          --source https://api.nuget.org/v3/index.json
-          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
-          --package-id "$PACKAGE_ID"
-          --version "$RELEASE_VERSION"
-          --allow-missing
-
-      - name: Preflight GitHub Packages identity
-        id: github-packages-registry-preflight
-        env:
-          GITHUB_PACKAGES_TOKEN: ${{ github.token }}
-          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-          GITHUB_PACKAGES_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-        run: >-
-          dotnet run --file scripts/verify-registry-package.cs --
-          --source "$GITHUB_PACKAGES_SOURCE"
-          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
-          --package-id "$PACKAGE_ID"
-          --version "$RELEASE_VERSION"
-          --username "${{ github.repository_owner }}"
-          --token-env GITHUB_PACKAGES_TOKEN
-          --allow-missing
-
       - name: Attest release artifacts
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
-            artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.nupkg
-            artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.snupkg
+            artifacts/release/${{ needs.build-and-pack.outputs.package-id }}.${{ needs.build-and-pack.outputs.version }}.nupkg
+            artifacts/release/${{ needs.build-and-pack.outputs.package-id }}.${{ needs.build-and-pack.outputs.version }}.snupkg
             artifacts/release/release-manifest.json
             artifacts/release/SHA256SUMS
-
-      - name: Create or verify release tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.build.outputs.tag }}
-          VALIDATED_SHA: ${{ needs.build.outputs.commit }}
-        run: |
-          set -euo pipefail
-
-          git fetch --force --tags origin
-
-          if git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}"; then
-            existing_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
-            if [[ "${existing_commit}" != "${VALIDATED_SHA}" ]]; then
-              echo "Tag ${RELEASE_TAG} already points to ${existing_commit}, not validated SHA ${VALIDATED_SHA}." >&2
-              exit 3
-            fi
-          else
-            if ! gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-              -f ref="refs/tags/${RELEASE_TAG}" \
-              -f sha="${VALIDATED_SHA}" >/dev/null; then
-              echo "Tag creation did not complete cleanly; re-fetching to detect a concurrent creator."
-            fi
-
-            git fetch --force origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
-          fi
-
-          tag_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
-          if [[ "${tag_commit}" != "${VALIDATED_SHA}" ]]; then
-            echo "Tag ${RELEASE_TAG} resolves to ${tag_commit}, not validated SHA ${VALIDATED_SHA}." >&2
-            exit 3
-          fi
-
-      - name: Authenticate to NuGet.org with Trusted Publishing
-        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
-        id: nuget-login
-        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
-        with:
-          user: ${{ vars.NUGET_USER }}
-
-      - name: Publish package to NuGet.org
-        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' && steps.nuget-registry-preflight.outputs.status == 'missing' }}"
-        env:
-          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-        run: >-
-          dotnet nuget push
-          "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
-          --source https://api.nuget.org/v3/index.json
-          --api-key "$NUGET_API_KEY"
-          --no-symbols
-          --skip-duplicate
-
-      - name: Publish symbol package to NuGet.org
-        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
-        env:
-          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-        run: >-
-          dotnet nuget push
-          "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
-          --source https://api.nuget.org/v3/index.json
-          --api-key "$NUGET_API_KEY"
-          --skip-duplicate
-
-      - name: Verify NuGet.org package identity after publication
-        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
-        env:
-          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-        run: >-
-          dotnet run --file scripts/verify-registry-package.cs --
-          --source https://api.nuget.org/v3/index.json
-          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
-          --package-id "$PACKAGE_ID"
-          --version "$RELEASE_VERSION"
-          --retry-count 12
-          --retry-delay-seconds 10
-
-      - name: Publish package to GitHub Packages
-        if: "${{ steps.github-packages-registry-preflight.outputs.status == 'missing' }}"
-        env:
-          GITHUB_PACKAGES_TOKEN: ${{ github.token }}
-          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-          GITHUB_PACKAGES_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-        run: >-
-          dotnet nuget push
-          "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
-          --source "$GITHUB_PACKAGES_SOURCE"
-          --api-key "$GITHUB_PACKAGES_TOKEN"
-          --skip-duplicate
-
-      - name: Verify GitHub Packages identity after publication
-        env:
-          GITHUB_PACKAGES_TOKEN: ${{ github.token }}
-          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
-          RELEASE_VERSION: ${{ needs.build.outputs.version }}
-          GITHUB_PACKAGES_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-        run: >-
-          dotnet run --file scripts/verify-registry-package.cs --
-          --source "$GITHUB_PACKAGES_SOURCE"
-          --package "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
-          --package-id "$PACKAGE_ID"
-          --version "$RELEASE_VERSION"
-          --username "${{ github.repository_owner }}"
-          --token-env GITHUB_PACKAGES_TOKEN
-          --retry-count 6
-          --retry-delay-seconds 10
 
       - name: Create or resume draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.build.outputs.tag }}
-          VALIDATED_SHA: ${{ needs.build.outputs.commit }}
+          RELEASE_TAG: ${{ needs.build-and-pack.outputs.tag }}
+          VALIDATED_SHA: ${{ needs.build-and-pack.outputs.commit }}
         run: |
           set -euo pipefail
 
-          git fetch --force --tags origin
-          existing_commit="$(git rev-list -n 1 "${RELEASE_TAG}")"
-          if [[ "${existing_commit}" != "${VALIDATED_SHA}" ]]; then
-            echo "Tag ${RELEASE_TAG} points to ${existing_commit}, not validated SHA ${VALIDATED_SHA}." >&2
+          git fetch --tags origin
+          existing_sha="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if [[ "${existing_sha}" != "${VALIDATED_SHA}" ]]; then
+            echo "Tag ${RELEASE_TAG} points to ${existing_sha}, not validated SHA ${VALIDATED_SHA}." >&2
             exit 3
           fi
 
           release_state="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
           if [[ "${release_state}" == "false" ]]; then
-            echo "Release ${RELEASE_TAG} is already published; refusing to mutate an immutable release." >&2
+            echo "Release ${RELEASE_TAG} is already published; refusing to mutate published release assets." >&2
             exit 3
           fi
 
@@ -494,8 +492,8 @@ jobs:
           fi
 
           gh release upload "${RELEASE_TAG}" \
-            "artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.nupkg" \
-            "artifacts/release/${{ needs.build.outputs.package-id }}.${{ needs.build.outputs.version }}.snupkg" \
+            "artifacts/release/${{ needs.build-and-pack.outputs.package-id }}.${{ needs.build-and-pack.outputs.version }}.nupkg" \
+            "artifacts/release/${{ needs.build-and-pack.outputs.package-id }}.${{ needs.build-and-pack.outputs.version }}.snupkg" \
             artifacts/release/release-manifest.json \
             artifacts/release/SHA256SUMS \
             --clobber
@@ -503,8 +501,8 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.build.outputs.tag }}
-          IS_PRERELEASE: ${{ needs.build.outputs.is-prerelease }}
+          RELEASE_TAG: ${{ needs.build-and-pack.outputs.tag }}
+          IS_PRERELEASE: ${{ needs.build-and-pack.outputs.is-prerelease }}
         run: |
           set -euo pipefail
 
