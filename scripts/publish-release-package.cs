@@ -64,8 +64,10 @@ static async Task<int> RunAsync(string[] args)
             return 0;
 
         case "GitHubPackages":
+            IGitHubPackageVersionClient versionClient = CreateGitHubPackageVersionClient(options, source);
             await PublishGitHubPackagesAsync(
                 client,
+                versionClient,
                 dotnetCommand,
                 source,
                 apiKey,
@@ -148,6 +150,7 @@ static async Task PublishNuGetOrgAsync(
 
 static async Task PublishGitHubPackagesAsync(
     IRegistryClient client,
+    IGitHubPackageVersionClient versionClient,
     string dotnetCommand,
     string source,
     string apiKey,
@@ -158,32 +161,37 @@ static async Task PublishGitHubPackagesAsync(
     int convergenceAttempts,
     TimeSpan convergenceDelay)
 {
-    PackageLookup lookup = await client.GetPackageAsync(packageUri).ConfigureAwait(false);
-    if (lookup.PackageBytes is not null)
+    if (await versionClient.VersionExistsAsync(packageId, version).ConfigureAwait(false))
     {
-        AssertPackagesHaveSameContent(packageId, version, packagePath, lookup.PackageBytes, "GitHub Packages");
+        await WaitForRegistryPackageAsync(
+            client,
+            packageUri,
+            packageId,
+            version,
+            packagePath,
+            "GitHub Packages",
+            convergenceAttempts,
+            convergenceDelay).ConfigureAwait(false);
         Console.WriteLine($"GitHub Packages: validated existing {packageId} {version}; skipping package push.");
         return;
     }
 
-    Console.WriteLine($"GitHub Packages: {packageId} {version} is not visible; submitting the validated package.");
+    Console.WriteLine($"GitHub Packages: {packageId} {version} is not currently published; submitting the validated package.");
     await InvokeDotNetNuGetPushAsync(
         dotnetCommand,
         source,
         apiKey,
         packageId,
         version,
-        packagePath,
-        "--skip-duplicate").ConfigureAwait(false);
-    await WaitForRegistryPackageAsync(
-        client,
-        packageUri,
+        packagePath).ConfigureAwait(false);
+
+    await WaitForGitHubPackageVisibleAsync(
+        versionClient,
         packageId,
         version,
-        packagePath,
-        "GitHub Packages",
         convergenceAttempts,
         convergenceDelay).ConfigureAwait(false);
+
     Console.WriteLine($"GitHub Packages publication completed for {packageId} {version}.");
 }
 
@@ -218,6 +226,34 @@ static async Task WaitForRegistryPackageAsync(
     }
 
     throw new TimeoutException($"{registryLabel} package convergence timed out for {packageId} {version} after {maxAttempts} attempts.");
+}
+
+static async Task WaitForGitHubPackageVisibleAsync(
+    IGitHubPackageVersionClient versionClient,
+    string packageId,
+    string version,
+    int maxAttempts,
+    TimeSpan delay)
+{
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        if (await versionClient.VersionExistsAsync(packageId, version).ConfigureAwait(false))
+        {
+            Console.WriteLine($"GitHub Packages: verified {packageId} {version} after publication.");
+            return;
+        }
+
+        if (attempt < maxAttempts)
+        {
+            Console.WriteLine($"GitHub Packages: indexing is still pending for {packageId} {version} ({attempt}/{maxAttempts}); retrying in {delay.TotalSeconds:0} seconds.");
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay).ConfigureAwait(false);
+            }
+        }
+    }
+
+    throw new TimeoutException($"GitHub Packages package convergence timed out for {packageId} {version} after {maxAttempts} attempts.");
 }
 
 static async Task InvokeDotNetNuGetPushAsync(
@@ -290,6 +326,18 @@ static IRegistryClient CreateRegistryClient(IReadOnlyDictionary<string, string> 
     }
 
     return new HttpRegistryClient(client);
+}
+
+static IGitHubPackageVersionClient CreateGitHubPackageVersionClient(IReadOnlyDictionary<string, string> options, string source)
+{
+    if (source.StartsWith("mock://", StringComparison.OrdinalIgnoreCase))
+    {
+        return new MockGitHubPackageVersionClient();
+    }
+
+    string owner = Required(options, "--username");
+    string token = RequiredEnvironmentVariable(Required(options, "--token-env"));
+    return new HttpGitHubPackageVersionClient(new HttpClient(), owner, token);
 }
 
 static Uri CreateFlatContainerPackageUri(Uri packageBaseAddress, string packageId, string version)
@@ -451,6 +499,11 @@ internal interface IRegistryClient
     Task<PackageLookup> GetPackageAsync(Uri packageUri);
 }
 
+internal interface IGitHubPackageVersionClient
+{
+    Task<bool> VersionExistsAsync(string packageId, string version);
+}
+
 internal sealed record PackageLookup(byte[]? PackageBytes);
 
 internal sealed class HttpRegistryClient(HttpClient client) : IRegistryClient
@@ -513,6 +566,78 @@ internal sealed class HttpRegistryClient(HttpClient client) : IRegistryClient
     }
 }
 
+internal sealed class HttpGitHubPackageVersionClient : IGitHubPackageVersionClient
+{
+    private readonly HttpClient client;
+    private readonly string owner;
+
+    public HttpGitHubPackageVersionClient(HttpClient client, string owner, string token)
+    {
+        this.client = client;
+        this.owner = owner;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("ReliableWebhooks-release-publish");
+    }
+
+    public async Task<bool> VersionExistsAsync(string packageId, string version)
+    {
+        string escapedOwner = Uri.EscapeDataString(owner);
+        string escapedPackageId = Uri.EscapeDataString(packageId);
+        var page = 1;
+
+        while (true)
+        {
+            var uri = new Uri(
+                $"https://api.github.com/users/{escapedOwner}/packages/nuget/{escapedPackageId}/versions?per_page=100&page={page}",
+                UriKind.Absolute);
+            using HttpResponseMessage response = await client.GetAsync(uri).ConfigureAwait(false);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return false;
+            }
+
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                throw new InvalidOperationException(
+                    $"GitHub Packages version lookup authentication failed for {packageId}: HTTP {(int)response.StatusCode}.");
+            }
+
+            if (response.StatusCode != HttpStatusCode.OK)
+            {
+                throw new InvalidOperationException(
+                    $"Unexpected GitHub Packages version lookup response HTTP {(int)response.StatusCode} for {packageId}.");
+            }
+
+            string json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                throw new InvalidOperationException("GitHub Packages version lookup returned an unexpected JSON payload.");
+            }
+
+            foreach (JsonElement item in root.EnumerateArray())
+            {
+                if (item.TryGetProperty("name", out JsonElement nameElement)
+                    && string.Equals(nameElement.GetString(), version, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            if (root.GetArrayLength() < 100)
+            {
+                return false;
+            }
+
+            page++;
+        }
+    }
+}
+
 internal sealed class MockRegistryClient : IRegistryClient
 {
     private readonly Queue<int> statuses = new(
@@ -545,5 +670,39 @@ internal sealed class MockRegistryClient : IRegistryClient
         }
 
         return value;
+    }
+}
+
+internal sealed class MockGitHubPackageVersionClient : IGitHubPackageVersionClient
+{
+    private readonly Queue<int> statuses;
+    private int lastStatus;
+
+    public MockGitHubPackageVersionClient()
+    {
+        string rawStatuses = Environment.GetEnvironmentVariable("RELIABLEWEBHOOKS_MOCK_GITHUB_VERSION_STATUSES")
+            ?? Environment.GetEnvironmentVariable("RELIABLEWEBHOOKS_MOCK_PACKAGE_STATUSES")
+            ?? "404";
+        statuses = new Queue<int>(
+            rawStatuses
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(static status => int.Parse(status, System.Globalization.CultureInfo.InvariantCulture)));
+        lastStatus = statuses.Count > 0 ? statuses.Peek() : 404;
+    }
+
+    public Task<bool> VersionExistsAsync(string packageId, string version)
+    {
+        if (statuses.Count > 0)
+        {
+            lastStatus = statuses.Dequeue();
+        }
+
+        return lastStatus switch
+        {
+            200 => Task.FromResult(true),
+            404 => Task.FromResult(false),
+            _ => throw new InvalidOperationException(
+                $"Unexpected GitHub Packages version lookup response HTTP {lastStatus} for {packageId}.")
+        };
     }
 }
