@@ -146,6 +146,7 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
     options.Dispatcher.MaxConcurrency = 8;
     options.Dispatcher.LeaseDuration = TimeSpan.FromMinutes(2);
     options.Dispatcher.PollInterval = TimeSpan.FromSeconds(1);
+    options.MessageLimits.MaxPayloadBytes = 1024 * 1024;
     options.Transport = new WebhookHttpTransportOptions
     {
         AttemptTimeout = TimeSpan.FromSeconds(30),
@@ -169,6 +170,8 @@ IWebhookEnqueueService webhookEnqueue =
 
 await webhookEnqueue.EnqueueAsync(message, cancellationToken);
 ```
+
+`IWebhookEnqueueService` enforces `ReliableWebhooksOptions.MessageLimits` before a delivery is persisted. Defaults allow a 1 MiB payload, 32 persisted custom headers, 16 KiB of aggregate custom header name/value bytes, 128-character webhook IDs, 128-character event types, 256-character content types, and 2048-character destination URIs. Increase these limits only for receivers and tenants that are expected to need larger messages, and pair them with application-level quotas so one tenant cannot consume the whole queue. Code that bypasses this service and calls `IWebhookDeliveryStore.EnqueueAsync` directly is also bypassing the standard production limit gate; call `WebhookMessageLimits.Validate(message)` explicitly in that path or enforce equivalent limits at the application boundary.
 
 The integration depends only on `Microsoft.Extensions.*`; it does not require ASP.NET Core.
 
@@ -333,6 +336,9 @@ The application can then add OTLP, Azure Monitor, Prometheus, Grafana/Tempo, Dat
 | Dispatcher shutdown grace period | 30 seconds |
 | HTTP attempt timeout | 30 seconds |
 | Captured response body | Up to 16 KiB |
+| Outbound payload size | Up to 1 MiB through `IWebhookEnqueueService` |
+| Persisted custom headers | Up to 32 headers and 16 KiB aggregate name/value bytes through `IWebhookEnqueueService` |
+| Persisted metadata length | ID/event type up to 128 characters, content type up to 256, destination URI up to 2048 through `IWebhookEnqueueService` |
 | Plain HTTP destinations | Rejected unless `AllowInsecureHttp = true` |
 | Success classification | Any `2xx` response |
 | Retryable HTTP responses | `408`, `425`, `429`, and `5xx` |
@@ -356,6 +362,7 @@ ReliableWebhooks is designed around explicit delivery semantics:
 
 - **At-least-once, not exactly-once.** Duplicate delivery can occur, especially when a worker fails after sending but before persisting the result.
 - **Stable IDs support duplicate-safe enqueueing.** Receivers still need application-level idempotency.
+- **Message resource limits protect the queue.** The standard enqueue service rejects oversized payloads, headers, and persisted metadata before store writes. Applications should still apply tenant quotas and business-level payload constraints.
 - **Leases coordinate active ownership.** While a lease is valid, two workers should not own the same delivery simultaneously; expired work can be reclaimed.
 - **Dispatcher concurrency is bounded.** Claims are limited to currently available slots instead of creating unbounded background tasks.
 - **Shutdown is two-phase.** New claims stop first; in-flight work can finish within the grace period before remaining attempts are canceled.
@@ -385,7 +392,7 @@ The main behaviors are exposed through public abstractions:
 - `IWebhookSigningSecretProvider` — per-message signing secret resolution;
 - `ReliableWebhooksInstrumentation` — stable public diagnostics names for tracing and metrics integration.
 
-`ReliableWebhooksOptions` groups dispatcher, retry, transport, and signing configuration for DI consumers. `WebhookDispatcherOptions` exposes `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod`, and `TimeProvider` so concurrency and timing remain configurable and testable.
+`ReliableWebhooksOptions` groups dispatcher, message limits, retry, transport, and signing configuration for DI consumers. `WebhookDispatcherOptions` exposes `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod`, and `TimeProvider` so concurrency and timing remain configurable and testable. `WebhookMessageLimits` exposes the standard per-message resource boundary used by `IWebhookEnqueueService` and can also be applied explicitly by applications that enqueue directly through a store.
 
 This keeps persistence, dispatching, transport behavior, signing, retry strategy, hosting, and telemetry backend selection independently replaceable and testable.
 

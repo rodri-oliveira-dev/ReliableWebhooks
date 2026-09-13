@@ -177,7 +177,7 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
         ArgumentNullException.ThrowIfNull(message);
         cancellationToken.ThrowIfCancellationRequested();
 
-        byte[] payload = message.Payload.ToArray();
+        ReadOnlyMemory<byte> payload = message.PayloadBuffer;
         using CancellationTokenSource? timeoutSource = CreateTimeoutSource(cancellationToken);
         CancellationToken attemptToken = timeoutSource?.Token ?? cancellationToken;
 
@@ -270,14 +270,14 @@ public sealed class WebhookHttpTransport : IWebhookDeliveryTransport
 
     private async ValueTask<HttpRequestMessage> CreateRequestAsync(
         WebhookMessage message,
-        byte[] payload,
+        ReadOnlyMemory<byte> payload,
         CancellationToken cancellationToken)
     {
         HttpRequestMessage request = new(HttpMethod.Post, message.Destination);
 
         try
         {
-            ByteArrayContent content = new(payload);
+            ReadOnlyMemoryContent content = new(payload);
             AddContentType(content, message.ContentType);
             request.Content = content;
 

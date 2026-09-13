@@ -461,13 +461,49 @@ public sealed class DependencyInjectionTests
             cancellation.Token));
     }
 
-    private static WebhookMessage CreateMessage(string id, Uri? destination = null)
+    [Fact]
+    public async Task EnqueueServiceRejectsOversizedMessagesBeforePersistence()
+    {
+        ServiceCollection services = new();
+        CountingStore store = new();
+        services.AddSingleton<IWebhookDeliveryStore>(store);
+        _ = services.AddReliableWebhooks(options => options.MessageLimits.MaxPayloadBytes = 1);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        IWebhookEnqueueService enqueueService = provider.GetRequiredService<IWebhookEnqueueService>();
+
+        ArgumentException exception = await Assert.ThrowsAsync<ArgumentException>(() => enqueueService.EnqueueAsync(
+            CreateMessage("oversized-payload", payload: new byte[] { 1, 2 }),
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("message", exception.ParamName);
+        Assert.Equal(0, store.EnqueueCalls);
+    }
+
+    [Fact]
+    public void InvalidMessageLimitOptionsFailWithActionableValidationMessage()
+    {
+        ServiceCollection services = new();
+        services.AddSingleton<IWebhookDeliveryStore, InMemoryWebhookDeliveryStore>();
+        _ = services.AddReliableWebhooks(options => options.MessageLimits.MaxPayloadBytes = -1);
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        OptionsValidationException exception = Assert.Throws<OptionsValidationException>(
+            () => provider.GetRequiredService<IWebhookEnqueueService>());
+        Assert.Contains("MessageLimits.MaxPayloadBytes cannot be negative.", exception.Failures);
+    }
+
+    private static WebhookMessage CreateMessage(
+        string id,
+        Uri? destination = null,
+        byte[]? payload = null)
     {
         return new WebhookMessage(
             id,
             "order.created",
             destination ?? new Uri("https://example.test/webhooks"),
-            "{}"u8.ToArray(),
+            payload ?? "{}"u8.ToArray(),
             "application/json");
     }
 
@@ -886,6 +922,87 @@ public sealed class DependencyInjectionTests
         public void Dispose()
         {
             state.Disposed(id);
+        }
+    }
+
+    private sealed class CountingStore : IWebhookDeliveryStore
+    {
+        private readonly InMemoryWebhookDeliveryStore innerStore = new();
+
+        internal int EnqueueCalls
+        {
+            get;
+            private set;
+        }
+
+        public Task<WebhookEnqueueResult> EnqueueAsync(
+            WebhookMessage message,
+            DateTimeOffset nextAttemptAt,
+            CancellationToken cancellationToken = default)
+        {
+            EnqueueCalls++;
+            return innerStore.EnqueueAsync(message, nextAttemptAt, cancellationToken);
+        }
+
+        public Task<IReadOnlyList<WebhookDeliveryLease>> ClaimDueAsync(
+            DateTimeOffset now,
+            TimeSpan leaseDuration,
+            int maxCount,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.ClaimDueAsync(now, leaseDuration, maxCount, cancellationToken);
+        }
+
+        public Task<WebhookDeliveryLease> RenewLeaseAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset now,
+            TimeSpan leaseDuration,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.RenewLeaseAsync(lease, now, leaseDuration, cancellationToken);
+        }
+
+        public Task MarkSucceededAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.MarkSucceededAsync(lease, completedAt, cancellationToken);
+        }
+
+        public Task ScheduleRetryAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            DateTimeOffset nextAttemptAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.ScheduleRetryAsync(lease, completedAt, nextAttemptAt, lastError, cancellationToken);
+        }
+
+        public Task MarkPermanentlyFailedAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.MarkPermanentlyFailedAsync(lease, completedAt, lastError, cancellationToken);
+        }
+
+        public Task DeadLetterAsync(
+            WebhookDeliveryLease lease,
+            DateTimeOffset completedAt,
+            string? lastError,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.DeadLetterAsync(lease, completedAt, lastError, cancellationToken);
+        }
+
+        public Task<WebhookDeliverySnapshot?> GetAsync(
+            string webhookId,
+            CancellationToken cancellationToken = default)
+        {
+            return innerStore.GetAsync(webhookId, cancellationToken);
         }
     }
 }

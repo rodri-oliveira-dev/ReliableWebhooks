@@ -10,6 +10,7 @@ internal sealed class ReliableWebhooksOptionsValidator : IValidateOptions<Reliab
 
         List<string> failures = [];
         ValidateDispatcher(options.Dispatcher, failures);
+        ValidateMessageLimits(options.MessageLimits, failures);
         ValidateRetry(options.Retry, failures);
         ValidateTransport(options.Transport, failures);
 
@@ -51,6 +52,52 @@ internal sealed class ReliableWebhooksOptionsValidator : IValidateOptions<Reliab
         if (options.TimeProvider is null)
         {
             failures.Add("Dispatcher.TimeProvider must not be null.");
+        }
+    }
+
+    private static void ValidateMessageLimits(
+        WebhookMessageLimits? options,
+        List<string> failures)
+    {
+        if (options is null)
+        {
+            failures.Add("ReliableWebhooksOptions.MessageLimits must not be null.");
+            return;
+        }
+
+        if (options.MaxPayloadBytes < 0)
+        {
+            failures.Add("MessageLimits.MaxPayloadBytes cannot be negative.");
+        }
+
+        if (options.MaxCustomHeaders < 0)
+        {
+            failures.Add("MessageLimits.MaxCustomHeaders cannot be negative.");
+        }
+
+        if (options.MaxCustomHeaderBytes < 0)
+        {
+            failures.Add("MessageLimits.MaxCustomHeaderBytes cannot be negative.");
+        }
+
+        if (options.MaxIdCharacters < 1)
+        {
+            failures.Add("MessageLimits.MaxIdCharacters must be greater than zero.");
+        }
+
+        if (options.MaxEventTypeCharacters < 1)
+        {
+            failures.Add("MessageLimits.MaxEventTypeCharacters must be greater than zero.");
+        }
+
+        if (options.MaxContentTypeCharacters < 1)
+        {
+            failures.Add("MessageLimits.MaxContentTypeCharacters must be greater than zero.");
+        }
+
+        if (options.MaxDestinationUriCharacters < 1)
+        {
+            failures.Add("MessageLimits.MaxDestinationUriCharacters must be greater than zero.");
         }
     }
 

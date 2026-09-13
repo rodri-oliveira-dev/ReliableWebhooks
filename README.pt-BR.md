@@ -146,6 +146,7 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
     options.Dispatcher.MaxConcurrency = 8;
     options.Dispatcher.LeaseDuration = TimeSpan.FromMinutes(2);
     options.Dispatcher.PollInterval = TimeSpan.FromSeconds(1);
+    options.MessageLimits.MaxPayloadBytes = 1024 * 1024;
     options.Transport = new WebhookHttpTransportOptions
     {
         AttemptTimeout = TimeSpan.FromSeconds(30),
@@ -169,6 +170,8 @@ IWebhookEnqueueService webhookEnqueue =
 
 await webhookEnqueue.EnqueueAsync(message, cancellationToken);
 ```
+
+`IWebhookEnqueueService` aplica `ReliableWebhooksOptions.MessageLimits` antes de persistir uma entrega. Os padrões permitem payload de 1 MiB, 32 headers customizados persistidos, 16 KiB de bytes agregados de nomes/valores de headers customizados, IDs de webhook com 128 caracteres, tipos de evento com 128 caracteres, content types com 256 caracteres e URIs de destino com 2048 caracteres. Aumente esses limites apenas para receivers e tenants que realmente precisem de mensagens maiores, e combine-os com quotas da aplicação para que um tenant não consuma toda a fila. Código que chama `IWebhookDeliveryStore.EnqueueAsync` diretamente também contorna o gate padrão de produção; nesse caminho, chame `WebhookMessageLimits.Validate(message)` explicitamente ou aplique limites equivalentes na borda da aplicação.
 
 A integração depende apenas de `Microsoft.Extensions.*`; ela não exige ASP.NET Core.
 
@@ -272,6 +275,9 @@ builder.Services
 | Grace period de shutdown | 30 segundos |
 | Timeout de tentativa HTTP | 30 segundos |
 | Corpo de resposta capturado | Até 16 KiB |
+| Tamanho de payload de saída | Até 1 MiB via `IWebhookEnqueueService` |
+| Headers customizados persistidos | Até 32 headers e 16 KiB agregados de nomes/valores via `IWebhookEnqueueService` |
+| Tamanho de metadados persistidos | ID/tipo do evento até 128 caracteres, content type até 256 e URI de destino até 2048 via `IWebhookEnqueueService` |
 | Destinos HTTP sem TLS | Rejeitados salvo com `AllowInsecureHttp = true` |
 | Classificação de sucesso | Qualquer resposta `2xx` |
 | Respostas HTTP retryable | `408`, `425`, `429` e `5xx` |
@@ -293,6 +299,7 @@ ReliableWebhooks trabalha com semântica explícita de entrega:
 
 - **At-least-once, não exactly-once.** Entregas duplicadas podem acontecer, especialmente quando um worker envia e falha antes de persistir o resultado.
 - **IDs estáveis tornam o enqueue duplicate-safe.** O receptor ainda precisa de idempotência no nível da aplicação.
+- **Limites de recursos da mensagem protegem a fila.** O serviço padrão de enqueue rejeita payloads, headers e metadados persistidos grandes demais antes da escrita no store. A aplicação ainda deve aplicar quotas por tenant e restrições de payload de negócio.
 - **Leases coordenam ownership ativo.** Enquanto uma lease é válida, dois workers não devem possuir a mesma entrega simultaneamente; trabalho expirado pode ser recuperado.
 - **A concorrência do dispatcher é limitada.** Claims respeitam os slots disponíveis e não criam tasks ilimitadas.
 - **O shutdown ocorre em duas fases.** Novos claims param primeiro; trabalho em andamento pode terminar durante o grace period antes de ser cancelado.
@@ -322,7 +329,7 @@ Os principais comportamentos são expostos por abstrações públicas:
 - `IWebhookSigningSecretProvider` — resolução de segredo por mensagem;
 - `ReliableWebhooksInstrumentation` — nomes públicos e estáveis de diagnostics.
 
-`ReliableWebhooksOptions` agrupa a configuração de dispatcher, retry, transporte e signing para consumidores via DI. `WebhookDispatcherOptions` mantém `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod` e `TimeProvider` configuráveis e testáveis.
+`ReliableWebhooksOptions` agrupa a configuração de dispatcher, limites de mensagem, retry, transporte e signing para consumidores via DI. `WebhookDispatcherOptions` mantém `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod` e `TimeProvider` configuráveis e testáveis. `WebhookMessageLimits` expõe a fronteira padrão de recursos por mensagem usada por `IWebhookEnqueueService` e também pode ser aplicada explicitamente por aplicações que fazem enqueue diretamente pelo store.
 
 ## Suporte e contribuição
 

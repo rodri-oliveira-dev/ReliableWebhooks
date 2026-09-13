@@ -90,7 +90,7 @@ public static class ReliableWebhooksServiceCollectionExtensions
     {
         ReliableWebhooksOptions options = GetOptions(serviceProvider);
         IWebhookDeliveryStore store = CreateScopedStore(serviceProvider);
-        return new WebhookEnqueueService(store, options.Dispatcher.TimeProvider);
+        return new WebhookEnqueueService(store, options.Dispatcher.TimeProvider, options.MessageLimits);
     }
 
     private static WebhookDispatcher CreateDispatcher(IServiceProvider serviceProvider)

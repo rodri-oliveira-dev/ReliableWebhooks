@@ -102,6 +102,8 @@ public sealed class WebhookMessage
     /// </summary>
     public ReadOnlyMemory<byte> Payload => payload.ToArray();
 
+    internal ReadOnlyMemory<byte> PayloadBuffer => payload;
+
     /// <summary>
     /// Gets the payload content type.
     /// </summary>

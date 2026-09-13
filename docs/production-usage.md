@@ -34,6 +34,13 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
         JitterFactor = 0.2,
     };
 
+    options.MessageLimits = new WebhookMessageLimits
+    {
+        MaxPayloadBytes = 1024 * 1024,
+        MaxCustomHeaders = 32,
+        MaxCustomHeaderBytes = 16 * 1024,
+    };
+
     options.Transport = new WebhookHttpTransportOptions
     {
         AttemptTimeout = TimeSpan.FromSeconds(30),
@@ -66,6 +73,20 @@ WebhookMessage message = new(
 
 await webhookEnqueueService.EnqueueAsync(message, cancellationToken);
 ```
+
+The standard `IWebhookEnqueueService` validates `ReliableWebhooksOptions.MessageLimits` before it calls the configured store, so oversized messages fail deterministically before durable persistence and are not treated as transient transport failures. Defaults are intentionally bounded for ordinary webhook workloads:
+
+- payload: 1 MiB;
+- custom headers: 32 entries;
+- aggregate custom header name/value bytes: 16 KiB using UTF-8 byte counts;
+- stable webhook ID: 128 characters;
+- event type: 128 characters;
+- content type: 256 characters;
+- destination URI: 2048 characters.
+
+Increase these limits only when the application contract requires larger messages, and combine them with tenant/application quotas, request-body limits, and payload-shape validation at the point where users or tenants submit webhook work. These limits protect each message that enters ReliableWebhooks; they do not replace broader capacity planning for the queue, persistence backend, or outbound network.
+
+Direct calls to `IWebhookDeliveryStore.EnqueueAsync` are a lower-level persistence-port operation. They intentionally remain available for custom orchestration, tests, and advanced adapters, but they bypass the DI enqueue-service guard unless the caller explicitly runs `WebhookMessageLimits.Validate(message)` or enforces an equivalent policy before the store write.
 
 The ID must be stable for the logical webhook. Enqueueing the same ID again is idempotent and must return the existing delivery rather than create a second record.
 
@@ -395,6 +416,13 @@ OpenTelemetry consumers can register the activity source and meter in their own 
 | `Retry.BaseDelay` | `1 second` | Positive duration |
 | `Retry.MaxDelay` | `5 minutes` | Positive and greater than or equal to `BaseDelay` |
 | `Retry.JitterFactor` | `0.2` | Finite number from `0` through `1` |
+| `MessageLimits.MaxPayloadBytes` | `1 MiB` | Zero or greater; enforced by `IWebhookEnqueueService` before persistence |
+| `MessageLimits.MaxCustomHeaders` | `32` | Zero or greater; set zero to disallow persisted custom headers |
+| `MessageLimits.MaxCustomHeaderBytes` | `16 KiB` | Zero or greater; sums UTF-8 header names and values |
+| `MessageLimits.MaxIdCharacters` | `128` | Greater than zero |
+| `MessageLimits.MaxEventTypeCharacters` | `128` | Greater than zero |
+| `MessageLimits.MaxContentTypeCharacters` | `256` | Greater than zero |
+| `MessageLimits.MaxDestinationUriCharacters` | `2048` | Greater than zero |
 | `Transport.AttemptTimeout` | `30 seconds` | Positive duration or `Timeout.InfiniteTimeSpan` |
 | `Transport.MaxResponseBodyBytes` | `16 KiB` | Zero or greater |
 | `Transport.AllowInsecureHttp` | `false` | Set `true` only for deliberate development, loopback, or trusted plaintext HTTP scenarios |
