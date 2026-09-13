@@ -4,6 +4,7 @@ using Xunit;
 
 namespace ReliableWebhooks.Tests;
 
+[Collection(GitHubPackagePublicationVisibilityCollection.Name)]
 public sealed class GitHubPackagesPublicationVisibilityTests
 {
     [Fact]
