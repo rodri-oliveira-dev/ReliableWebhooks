@@ -59,6 +59,61 @@ public sealed class GitHubPackagesPublicationVisibilityTests
         Assert.Contains("verified ReliableWebhooks 1.0.0 after publication", result.Output, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ExistingPublishedPackageWaitsForContentBeforeComparison()
+    {
+        using TempDirectory temp = new();
+        string package = Path.Combine(temp.Path, "ReliableWebhooks.1.0.0.nupkg");
+        WritePackage(package);
+        string dotnetStub = CreateSuccessfulDotNetStub(temp.Path);
+        string repoRoot = FindRepoRoot();
+
+        List<string> arguments =
+        [
+            "run",
+            "--file",
+            Path.Combine(repoRoot, "scripts", "publish-release-package.cs"),
+            "--",
+            "--registry",
+            "GitHubPackages",
+            "--source",
+            "mock://registry/index.json",
+            "--package",
+            package,
+            "--package-id",
+            "ReliableWebhooks",
+            "--version",
+            "1.0.0",
+            "--api-key-env",
+            "TEST_API_KEY",
+            "--username",
+            "owner",
+            "--token-env",
+            "TEST_GITHUB_TOKEN",
+            "--convergence-attempts",
+            "2",
+            "--convergence-delay-seconds",
+            "0"
+        ];
+
+        Dictionary<string, string?> environment = new(StringComparer.Ordinal)
+        {
+            ["RELIABLEWEBHOOKS_DOTNET_COMMAND"] = dotnetStub,
+            ["RELIABLEWEBHOOKS_MOCK_PACKAGE_STATUSES"] = "404,200",
+            ["RELIABLEWEBHOOKS_MOCK_GITHUB_VERSION_STATUSES"] = "200",
+            ["RELIABLEWEBHOOKS_MOCK_REMOTE_PACKAGE"] = package,
+            ["TEST_API_KEY"] = "api-key",
+            ["TEST_GITHUB_TOKEN"] = "github-token"
+        };
+
+        CommandResult result = await RunCommandAsync("dotnet", arguments, repoRoot, environment);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("GitHub Packages: ReliableWebhooks 1.0.0 converged and matches the validated artifact.", result.Output, StringComparison.Ordinal);
+        Assert.Contains("GitHub Packages: validated existing ReliableWebhooks 1.0.0; skipping package push.", result.Output, StringComparison.Ordinal);
+        Assert.DoesNotContain("> dotnet nuget push", result.Output, StringComparison.Ordinal);
+    }
+
     private static void WritePackage(string path)
     {
         using FileStream stream = File.Create(path);
