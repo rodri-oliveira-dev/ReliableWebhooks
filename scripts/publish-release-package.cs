@@ -111,7 +111,8 @@ static async Task PublishNuGetOrgAsync(
             packageId,
             version,
             packagePath,
-            "--no-symbols").ConfigureAwait(false);
+            "--no-symbols",
+            "--skip-duplicate").ConfigureAwait(false);
         await WaitForRegistryPackageAsync(
             client,
             packageUri,

@@ -27,8 +27,12 @@ public sealed class ReleasePublicationHelperTests
 
         Assert.Equal(0, result.ExitCode);
         string log = await File.ReadAllTextAsync(pushLog, TestContext.Current.CancellationToken);
-        Assert.Contains($"{PackageId}.{Version}.nupkg", log, StringComparison.Ordinal);
-        Assert.Contains($"{PackageId}.{Version}.snupkg", log, StringComparison.Ordinal);
+        string[] pushes = log.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains(pushes, push => push.Contains($"{PackageId}.{Version}.nupkg", StringComparison.Ordinal)
+            && push.Contains("--no-symbols", StringComparison.Ordinal)
+            && push.Contains("--skip-duplicate", StringComparison.Ordinal));
+        Assert.Contains(pushes, push => push.Contains($"{PackageId}.{Version}.snupkg", StringComparison.Ordinal)
+            && push.Contains("--skip-duplicate", StringComparison.Ordinal));
     }
 
     [Fact]

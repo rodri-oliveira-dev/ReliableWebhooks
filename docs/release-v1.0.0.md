@@ -24,13 +24,15 @@ No long-lived NuGet API key is stored by the repository.
 
 ## External Release Prerequisites
 
-Official publication requires:
+GitHub Packages, the release tag, and the GitHub Release do not require `NUGET_USER`.
+
+To include NuGet.org in the official publication, configure:
 
 1. a NuGet.org Trusted Publishing policy that authorizes this repository, `.github/workflows/release.yml`, and the `release` GitHub environment;
 2. repository variable `NUGET_USER` containing the NuGet.org profile authorized by that policy;
 3. the GitHub `release` environment approvals or protection rules required by the repository owner.
 
-`NUGET_USER` is a repository variable, not a secret. If it is absent during an official release, the NuGet publication job fails with a clear configuration error and the GitHub Release is not published.
+`NUGET_USER` is a repository variable, not a secret. If it is absent during an official release, the workflow skips only NuGet.org publication while preserving the validated tag, GitHub Packages publication, attestations, and GitHub Release.
 
 ## Job Sequence
 
@@ -42,9 +44,9 @@ Official release jobs run in this order:
 
 1. `build-and-pack`: validates SemVer and branch, restores locked dependencies, verifies formatting, builds Release, runs tests, validates `PublicApi.v1.0.0.txt`, packs, validates package metadata, symbols and Source Link, runs the clean consumer/custom `IWebhookDeliveryStore` validation, writes the release manifest and checksums, and uploads one immutable release candidate artifact.
 2. `ensure-release-tag`: creates `v<version>` only for the validated SHA. If the tag already points to the same SHA it is accepted; if it points anywhere else the release fails. Existing tags are never moved.
-3. `publish-nuget`: enters the `release` environment, exchanges GitHub OIDC for a temporary NuGet API key through `NuGet/login`, downloads the validated artifact, verifies manifest/checksums, and publishes only those downloaded files.
+3. `publish-nuget`: when `NUGET_USER` is configured, enters the `release` environment, exchanges GitHub OIDC for a temporary NuGet API key through `NuGet/login`, downloads the validated artifact, verifies manifest/checksums, and publishes only those downloaded files. When `NUGET_USER` is absent, this job is skipped.
 4. `publish-github-packages`: enters the `release` environment, downloads the same validated artifact, verifies manifest/checksums, and publishes the validated package to GitHub Packages without rebuilding.
-5. `github-release`: runs only after both registries succeed, verifies the same artifact, creates or resumes a draft release, attaches the validated files, generates attestations, and publishes the GitHub Release.
+5. `github-release`: runs after GitHub Packages succeeds and after NuGet.org either succeeds or is skipped by configuration, verifies the same artifact, creates or resumes a draft release, attaches the validated files, generates attestations, and publishes the GitHub Release.
 
 ## Idempotent Publication
 
@@ -86,7 +88,7 @@ Before running the official workflow, verify that:
 - `CI`, `CodeQL`, and `Dependency Review` are green on the protected `main` commit;
 - `dotnet tool restore`, locked restore, formatting, Release build, all tests, coverage, package validation, public API validation, sample E2E, clean consumer validation, release manifest/checksum generation, and release-candidate verification pass for the same SHA;
 - the generated `.nupkg`, `.snupkg`, `release-manifest.json`, and `SHA256SUMS` are the exact artifacts consumed by the publishing jobs;
-- the NuGet.org Trusted Publishing policy, `NUGET_USER` repository variable, and GitHub `release` environment are configured;
+- the NuGet.org Trusted Publishing policy and `NUGET_USER` repository variable are configured when NuGet.org publication is required;
 - no long-lived NuGet API key, signing secret, credential-bearing webhook URL, payload, authorization header, cookie, or other delivery secret is committed or emitted through release artifacts.
 
 ## Public API Snapshot

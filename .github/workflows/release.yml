@@ -63,6 +63,8 @@ jobs:
       commit: ${{ steps.release-commit.outputs.commit }}
       package-id: ${{ steps.package.outputs.package_id }}
       artifact-name: ${{ steps.release-artifact.outputs.artifact_name }}
+      nuget-publishing-enabled: ${{ steps.nuget-publishing.outputs.nuget_publishing_enabled }}
+      nuget-publishing-reason: ${{ steps.nuget-publishing.outputs.nuget_publishing_reason }}
 
     steps:
       - name: Checkout repository
@@ -137,6 +139,14 @@ jobs:
           else
             echo "Tag ${RELEASE_TAG} does not currently exist."
           fi
+
+      - name: Resolve NuGet publishing opt-in
+        id: nuget-publishing
+        shell: bash
+        env:
+          SHOULD_PUBLISH: ${{ steps.release-metadata.outputs.should_publish }}
+          NUGET_USER: ${{ vars.NUGET_USER }}
+        run: bash scripts/resolve-nuget-publishing.sh
 
       - name: Validate resolved MSBuild version
         shell: bash
@@ -261,7 +271,7 @@ jobs:
 
   publish-nuget:
     name: Publish to NuGet.org
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.build-and-pack.outputs.nuget-publishing-enabled == 'true' }}
     needs:
       - build-and-pack
       - ensure-release-tag
@@ -304,13 +314,6 @@ jobs:
           --symbols "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
           --manifest artifacts/release/release-manifest.json
           --checksums artifacts/release/SHA256SUMS
-
-      - name: Validate NuGet.org Trusted Publishing configuration
-        shell: bash
-        env:
-          SHOULD_PUBLISH: "true"
-          NUGET_USER: ${{ vars.NUGET_USER }}
-        run: bash scripts/resolve-nuget-publishing.sh
 
       - name: Authenticate to NuGet.org with Trusted Publishing
         id: nuget-login
@@ -404,7 +407,15 @@ jobs:
 
   github-release:
     name: Publish GitHub Release
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: >-
+      ${{
+        always()
+        && github.event_name == 'workflow_dispatch'
+        && needs.build-and-pack.result == 'success'
+        && needs.ensure-release-tag.result == 'success'
+        && needs.publish-github-packages.result == 'success'
+        && (needs.publish-nuget.result == 'success' || needs.publish-nuget.result == 'skipped')
+      }}
     needs:
       - build-and-pack
       - ensure-release-tag

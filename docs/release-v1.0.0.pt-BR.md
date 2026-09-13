@@ -24,13 +24,15 @@ Nenhuma API key duradoura do NuGet é armazenada no repositório.
 
 ## Pré-requisitos externos
 
-A publicação oficial exige:
+GitHub Packages, a tag de release e a GitHub Release não exigem `NUGET_USER`.
+
+Para incluir NuGet.org na publicação oficial, configure:
 
 1. uma política de Trusted Publishing no NuGet.org autorizando este repositório, `.github/workflows/release.yml` e o GitHub Environment `release`;
 2. a variável de repositório `NUGET_USER` com o perfil NuGet.org autorizado por essa política;
 3. as aprovações ou regras de proteção do GitHub Environment `release` exigidas pelo mantenedor.
 
-`NUGET_USER` é uma repository variable, não um secret. Se ela estiver ausente durante uma release oficial, o job de NuGet falha com erro claro de configuração e a GitHub Release não é publicada.
+`NUGET_USER` é uma repository variable, não um secret. Se ela estiver ausente durante uma release oficial, o workflow pula apenas a publicação no NuGet.org, preservando a tag validada, publicação no GitHub Packages, attestations e GitHub Release.
 
 ## Sequência dos jobs
 
@@ -42,9 +44,9 @@ Os jobs oficiais rodam nesta ordem:
 
 1. `build-and-pack`: valida SemVer e branch, restaura dependências em locked mode, verifica formatação, compila em Release, executa testes, valida `PublicApi.v1.0.0.txt`, empacota, valida metadados do pacote, símbolos e Source Link, executa validação de consumidor limpo com `IWebhookDeliveryStore` customizado, escreve manifest/checksums e publica um único artifact imutável de release candidate.
 2. `ensure-release-tag`: cria `v<version>` apenas para o SHA validado. Se a tag já aponta para o mesmo SHA, aceita; se aponta para qualquer outro SHA, falha. Tags existentes nunca são movidas.
-3. `publish-nuget`: entra no Environment `release`, troca GitHub OIDC por uma API key temporária com `NuGet/login`, baixa o artifact validado, confere manifest/checksums e publica somente esses arquivos baixados.
+3. `publish-nuget`: quando `NUGET_USER` está configurada, entra no Environment `release`, troca GitHub OIDC por uma API key temporária com `NuGet/login`, baixa o artifact validado, confere manifest/checksums e publica somente esses arquivos baixados. Quando `NUGET_USER` está ausente, este job é pulado.
 4. `publish-github-packages`: entra no Environment `release`, baixa o mesmo artifact validado, confere manifest/checksums e publica o pacote validado no GitHub Packages sem rebuild.
-5. `github-release`: roda somente após os dois registries passarem, verifica o mesmo artifact, cria ou retoma um draft de release, anexa os arquivos validados, gera attestations e publica a GitHub Release.
+5. `github-release`: roda depois que GitHub Packages passa e depois que NuGet.org passa ou é pulado por configuração, verifica o mesmo artifact, cria ou retoma um draft de release, anexa os arquivos validados, gera attestations e publica a GitHub Release.
 
 ## Publicação idempotente
 
@@ -86,7 +88,7 @@ Antes de rodar o workflow oficial, verifique que:
 - `CI`, `CodeQL` e `Dependency Review` estão verdes no commit protegido de `main`;
 - `dotnet tool restore`, restore em locked mode, formatação, build Release, todos os testes, cobertura, validação de pacote, validação de API pública, sample E2E, validação de consumidor limpo, geração de manifest/checksums e verificação do release candidate passam para o mesmo SHA;
 - `.nupkg`, `.snupkg`, `release-manifest.json` e `SHA256SUMS` gerados são os artifacts exatos consumidos pelos jobs de publicação;
-- a política de Trusted Publishing do NuGet.org, a variável `NUGET_USER` e o Environment `release` estão configurados;
+- a política de Trusted Publishing do NuGet.org e a variável `NUGET_USER` estão configuradas quando publicação no NuGet.org for exigida;
 - nenhuma API key duradoura do NuGet, segredo de assinatura, URL de webhook com credencial, payload, header de autorização, cookie ou outro segredo de entrega é commitado ou emitido nos artifacts.
 
 ## Snapshot de API pública

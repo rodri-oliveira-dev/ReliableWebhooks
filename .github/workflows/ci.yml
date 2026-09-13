@@ -213,10 +213,7 @@ jobs:
           grep -Fq 'nuget_publishing_reason=release-disabled' "$output"
 
           : > "$output"
-          if SHOULD_PUBLISH=true NUGET_USER= GITHUB_OUTPUT="$output" bash scripts/resolve-nuget-publishing.sh; then
-            echo "Publicação oficial sem NUGET_USER deveria falhar."
-            exit 1
-          fi
+          SHOULD_PUBLISH=true NUGET_USER= GITHUB_OUTPUT="$output" bash scripts/resolve-nuget-publishing.sh
           grep -Fq 'nuget_publishing_enabled=false' "$output"
           grep -Fq 'nuget_publishing_reason=nuget-user-not-configured' "$output"
 
