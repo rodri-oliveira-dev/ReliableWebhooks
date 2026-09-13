@@ -163,14 +163,15 @@ static async Task PublishGitHubPackagesAsync(
 {
     if (await versionClient.VersionExistsAsync(packageId, version).ConfigureAwait(false))
     {
-        PackageLookup lookup = await client.GetPackageAsync(packageUri).ConfigureAwait(false);
-        if (lookup.PackageBytes is null)
-        {
-            throw new InvalidOperationException(
-                $"GitHub Packages reports {packageId} {version} as published, but the package content is not available for artifact comparison.");
-        }
-
-        AssertPackagesHaveSameContent(packageId, version, packagePath, lookup.PackageBytes, "GitHub Packages");
+        await WaitForRegistryPackageAsync(
+            client,
+            packageUri,
+            packageId,
+            version,
+            packagePath,
+            "GitHub Packages",
+            convergenceAttempts,
+            convergenceDelay).ConfigureAwait(false);
         Console.WriteLine($"GitHub Packages: validated existing {packageId} {version}; skipping package push.");
         return;
     }
