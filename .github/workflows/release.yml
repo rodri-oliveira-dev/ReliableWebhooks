@@ -386,7 +386,7 @@ jobs:
           fi
 
       - name: Authenticate to NuGet.org with Trusted Publishing
-        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' && steps.nuget-registry-preflight.outputs.status == 'missing' }}"
+        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
         id: nuget-login
         uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
@@ -401,6 +401,19 @@ jobs:
         run: >-
           dotnet nuget push
           "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key "$NUGET_API_KEY"
+          --skip-duplicate
+
+      - name: Publish symbol package to NuGet.org
+        if: "${{ needs.build.outputs.nuget-publishing-enabled == 'true' }}"
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          PACKAGE_ID: ${{ needs.build.outputs.package-id }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: >-
+          dotnet nuget push
+          "artifacts/release/${PACKAGE_ID}.${RELEASE_VERSION}.snupkg"
           --source https://api.nuget.org/v3/index.json
           --api-key "$NUGET_API_KEY"
           --skip-duplicate
