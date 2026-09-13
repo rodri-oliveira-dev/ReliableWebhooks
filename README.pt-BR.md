@@ -72,7 +72,7 @@ A primeira release pública mantém a persistência intencionalmente independent
 - exactly-once, idempotência no receiver, replay automático de dead letters e política de rotação de secrets não são garantidos;
 - EF Core, Dapper, ADO.NET, Redis, arquivos, bancos de documentos e outras tecnologias são escolhas opcionais do consumidor, não dependências do core.
 
-Consulte [`docs/production-usage.md`](docs/production-usage.md) para integração de produção e [`docs/release-v1.0.0.md`](docs/release-v1.0.0.md) para detalhes da release/distribuição.
+Consulte [`docs/production-usage.md`](docs/production-usage.md) para integração de produção e [`docs/release-v1.0.0.pt-BR.md`](docs/release-v1.0.0.pt-BR.md) para detalhes da release/distribuição.
 
 ## Começando
 

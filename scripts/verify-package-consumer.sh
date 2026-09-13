@@ -6,14 +6,25 @@ if [[ $# -ne 2 ]]; then
   exit 1
 fi
 
-package_dir="$(realpath "$1")"
+to_dotnet_path() {
+  local path="$1"
+  if command -v cygpath >/dev/null 2>&1 && [[ "$(uname -s)" == MINGW* ]]; then
+    cygpath -w "$(realpath "$path")"
+  else
+    realpath "$path"
+  fi
+}
+
+package_dir="$(to_dotnet_path "$1")"
 version="$2"
 consumer="$(mktemp -d)"
+consumer_project_path="$(to_dotnet_path "$consumer")"
 trap 'rm -rf "$consumer"' EXIT
 
-dotnet new console --framework net10.0 --output "$consumer" >/dev/null
+dotnet new console --framework net10.0 --output "$consumer_project_path" >/dev/null
 project="$(find "$consumer" -maxdepth 1 -name '*.csproj' -print -quit)"
 test -n "$project"
+dotnet_project="$(to_dotnet_path "$project")"
 
 cat > "$consumer/NuGet.Config" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
@@ -26,10 +37,10 @@ cat > "$consumer/NuGet.Config" <<EOF
 </configuration>
 EOF
 
-dotnet add "$project" package ReliableWebhooks \
+dotnet add "$dotnet_project" package ReliableWebhooks \
   --version "$version" >/dev/null
 
-dotnet add "$project" package Microsoft.Extensions.DependencyInjection \
+dotnet add "$dotnet_project" package Microsoft.Extensions.DependencyInjection \
   --version 10.0.12 >/dev/null
 
 cat > "$consumer/Program.cs" <<'EOF'
@@ -134,4 +145,4 @@ file sealed class SharedStore
 }
 EOF
 
-dotnet run --project "$project" --configuration Release
+dotnet run --project "$dotnet_project" --configuration Release
