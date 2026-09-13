@@ -3,7 +3,6 @@ using Xunit;
 namespace ReliableWebhooks.Tests;
 
 [CollectionDefinition("GitHub package publication visibility", DisableParallelization = true)]
-public sealed class GitHubPackagePublicationVisibilityCollection
+public sealed class GitHubPackagePublicationVisibilityDefinition
 {
-    public const string Name = "GitHub package publication visibility";
 }
