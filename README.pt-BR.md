@@ -6,31 +6,51 @@
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[English](README.md) | **Português (Brasil)**
+[English](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/README.md) | **Português (Brasil)**
 
-ReliableWebhooks é uma biblioteca .NET 10 para entrega confiável de webhooks de saída.
+ReliableWebhooks é uma biblioteca .NET 10 para construção de entrega confiável de webhooks de saída.
 
-A primeira release pública é a **v1.0.0**. Ela fornece contrato de persistência independente de tecnologia, dispatch concorrente limitado, ownership por lease, retries configuráveis, assinatura HMAC-SHA256, padrões HTTP seguros, observabilidade padrão do .NET e integração com DI/Generic Host.
+Ela fornece componentes combináveis para identidade estável de webhooks, persistência e coordenação por lease, dispatch concorrente limitado, envio HTTP de uma única tentativa, assinatura HMAC-SHA256, classificação de respostas, agendamento determinístico de retries, observabilidade independente de backend e integração com injeção de dependência/hosting padrão do .NET. O objetivo é tornar explícitas as preocupações de confiabilidade da entrega de webhooks, em vez de escondê-las dentro de um loop de background opaco.
+
+> **Escopo da v1.0.0:** a primeira release pública fornece o engine de entrega confiável, contrato `IWebhookDeliveryStore` independente de tecnologia, retries, leases, assinatura, observabilidade, injeção de dependência, hosted dispatcher e orientação de produção. A durabilidade entre reinícios é fornecida por um store durável e aderente ao contrato escolhido pela aplicação.
 
 ## Por que ReliableWebhooks?
 
-Enviar uma requisição HTTP é simples; entregá-la de forma confiável diante de falhas transitórias, reinícios de processo, workers concorrentes, janelas de retry e cenários de entrega duplicada não é. ReliableWebhooks mantém essas responsabilidades explícitas e substituíveis, em vez de escondê-las em um loop de background opaco.
+Enviar um `POST` HTTP é simples. Entregar um webhook de forma confiável não é.
 
-Os principais recursos incluem:
+Aplicações reais precisam lidar com falhas HTTP transitórias, erros de rede, queda do processo, workers concorrentes, picos de retry, trabalho abandonado, entregas duplicadas e servidores que pedem ao cliente para tentar novamente mais tarde. Uma solução confiável também precisa preservar estado suficiente para continuar com segurança após uma falha, sem fingir que exactly-once é possível sobre HTTP.
 
-- identidades estáveis e semântica de enqueue segura contra duplicidade;
-- `IWebhookDeliveryStore` como porta de persistência substituível;
-- dispatch concorrente limitado com leases renováveis;
-- transporte HTTP de uma tentativa com classificação de resposta;
-- backoff exponencial, jitter e suporte a `Retry-After`;
-- assinatura HMAC-SHA256 sobre um envelope autenticado e versionado;
-- HTTPS por padrão, isolamento de redirects/cookies e política de destino;
-- logs estruturados, traces e métricas limitadas por meio das APIs padrão do .NET;
-- injeção de dependência e hosted dispatcher opcional.
+ReliableWebhooks trata esses pontos separando o fluxo de entrega em responsabilidades explícitas:
+
+- uma identidade estável para cada mensagem de webhook;
+- um contrato de persistência para enqueue, claim, lease, retry e conclusão de entregas;
+- um dispatcher concorrente que faz claim apenas da capacidade disponível e coordena shutdown gracioso;
+- um transporte HTTP que executa exatamente uma tentativa de requisição por chamada;
+- assinatura HMAC-SHA256 opcional sobre metadados gerados e os bytes exatos do payload enviado;
+- resultados independentes do transporte para sucesso, falha retryable e falha permanente;
+- uma política de retry que calcula a próxima tentativa sem aguardar nem bloquear um worker;
+- logs estruturados, traces e métricas baseados nas APIs padrão de diagnostics do .NET;
+- integração com Microsoft DI e Generic Host, com hosted dispatcher opcional;
+- abstrações substituíveis para persistência, transporte, temporização do dispatcher, assinatura, classificação e comportamento de retry.
+
+## Como funciona
+
+Uma entrega com ReliableWebhooks é estruturada como uma pequena máquina de estados, e não como uma chamada HTTP fire-and-forget:
+
+1. Crie um `WebhookMessage` com ID estável, tipo de evento, destino, bytes exatos do payload, content type e headers opcionais.
+2. Faça o enqueue através de `IWebhookDeliveryStore` ou da API de aplicação `IWebhookEnqueueService`. Tentativas duplicadas com o mesmo ID estável têm comportamento determinístico. Envolva o store com `InstrumentedWebhookDeliveryStore` quando precisar de logs de enqueue e da métrica de queued independentemente da implementação de persistência.
+3. `WebhookDispatcher` faz claim atômico das entregas vencidas até o limite de slots de concorrência disponíveis e recebe instâncias expirantes de `WebhookDeliveryLease`.
+4. `WebhookHttpTransport` executa um único `POST` HTTP por entrega em lease; quando um signer está configurado, ele assina exatamente o mesmo buffer usado na requisição e adiciona headers com ID, tipo do evento, timestamp e assinatura.
+5. O transporte retorna um `WebhookDeliveryResult` com resultado independente do transporte.
+6. Sucessos e falhas permanentes são persistidos imediatamente. Falhas retryable são passadas para `IWebhookRetryPolicy`, que retorna um `NextAttemptAt` futuro ou uma decisão de dead letter.
+7. O store registra o estado resultante para que trabalhos abandonados ou com falha possam ser retomados com segurança. A posse da lease impede que workers obsoletos sobrescrevam o dono atual.
+8. O ciclo de vida emite logs estruturados seguros, uma activity por tentativa e métricas limitadas sem exigir backend de telemetria.
+
+Quando combinado com um store durável, o modelo de entrega pretendido é **at-least-once**, e não exactly-once. Portanto, os receptores precisam ser idempotentes e tolerar entregas duplicadas.
 
 ## Instalação
 
-O pacote tem como target `net10.0`.
+O Package ID no NuGet é `ReliableWebhooks` e a biblioteca tem como target `net10.0`. Instale a v1.0.0 com:
 
 ```bash
 dotnet add package ReliableWebhooks --version 1.0.0
@@ -42,7 +62,21 @@ ou:
 <PackageReference Include="ReliableWebhooks" Version="1.0.0" />
 ```
 
+## Limites da v1.0.0
+
+A primeira release pública mantém a persistência intencionalmente independente de tecnologia:
+
+- nenhum store durável de produção é incluído; a aplicação registra um `IWebhookDeliveryStore` aderente ao contrato;
+- `InMemoryWebhookDeliveryStore` não é durável e serve apenas para testes, samples e desenvolvimento local;
+- a entrega é at-least-once quando apoiada por um store durável aderente, portanto receivers devem ser idempotentes;
+- exactly-once, idempotência no receiver, replay automático de dead letters e política de rotação de secrets não são garantidos;
+- EF Core, Dapper, ADO.NET, Redis, arquivos, bancos de documentos e outras tecnologias são escolhas opcionais do consumidor, não dependências do core.
+
+Consulte [`docs/production-usage.md`](docs/production-usage.md) para integração de produção e [`docs/release-v1.0.0.md`](docs/release-v1.0.0.md) para detalhes da release/distribuição.
+
 ## Começando
+
+A API também permite montar os componentes diretamente. O exemplo abaixo usa o store em memória apenas para demonstrar o fluxo.
 
 ```csharp
 using System.Text.Json;
@@ -61,13 +95,46 @@ var message = new WebhookMessage(
     payload: payload,
     contentType: "application/json");
 
-IWebhookDeliveryStore store = new InMemoryWebhookDeliveryStore();
+IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+    new InMemoryWebhookDeliveryStore());
 await store.EnqueueAsync(message, DateTimeOffset.UtcNow);
+
+using var handler = new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+    UseCookies = false,
+};
+
+using var httpClient = new HttpClient(handler);
+IWebhookDeliveryTransport transport = new WebhookHttpTransport(httpClient);
+IWebhookRetryPolicy retryPolicy = new DefaultWebhookRetryPolicy();
+
+var dispatcher = new WebhookDispatcher(
+    store,
+    transport,
+    retryPolicy,
+    new WebhookDispatcherOptions
+    {
+        MaxConcurrency = 4,
+        LeaseDuration = TimeSpan.FromMinutes(1),
+        PollInterval = TimeSpan.FromSeconds(1),
+        ShutdownGracePeriod = TimeSpan.FromSeconds(30),
+    });
+
+await dispatcher.RunAsync(stoppingToken);
 ```
 
-`InMemoryWebhookDeliveryStore` **não é durável**. Ele é destinado a testes, samples e desenvolvimento local. Durabilidade entre reinícios em produção exige um `IWebhookDeliveryStore` durável e aderente ao contrato, fornecido pela aplicação.
+`WebhookDispatcher` não cria trabalho de forma ilimitada: ele faz claim no máximo da quantidade de slots de concorrência disponíveis. No shutdown, ele interrompe novos claims, permite que entregas em andamento terminem durante o grace period configurado e cancela as tentativas restantes depois desse limite. Trabalho cancelado não é marcado como sucesso; sua lease pode expirar e ser recuperada posteriormente.
 
-## Injeção de dependência
+`InMemoryWebhookDeliveryStore` é local ao processo e **não é durável**. Ele existe apenas para testes e exemplos e não deve ser usado como persistência de produção.
+
+Para o contrato completo de persistência e as orientações de conformidade, consulte [`docs/persistence.pt-BR.md`](docs/persistence.pt-BR.md).
+
+Um exemplo end-to-end executável está disponível em [`samples/ReliableWebhooks.Sample`](samples/ReliableWebhooks.Sample). Para integração em produção, configuração, idempotência do receiver, verificação de assinatura e troubleshooting, consulte [`docs/production-usage.md`](docs/production-usage.md).
+
+### Injeção de dependência e hosted dispatcher
+
+Aplicações que usam o Generic Host do .NET podem registrar a integração padrão através de `AddReliableWebhooks`. Uma aplicação de produção deve registrar seu próprio `IWebhookDeliveryStore`; ReliableWebhooks não escolhe implicitamente o store em memória, que não é durável, como default de produção.
 
 ```csharp
 services.AddSingleton<IWebhookDeliveryStore, MyDurableWebhookStore>();
@@ -76,62 +143,236 @@ ReliableWebhooksBuilder webhooks = services.AddReliableWebhooks(options =>
 {
     options.Dispatcher.MaxConcurrency = 8;
     options.Dispatcher.LeaseDuration = TimeSpan.FromMinutes(2);
+    options.Dispatcher.PollInterval = TimeSpan.FromSeconds(1);
     options.MessageLimits.MaxPayloadBytes = 1024 * 1024;
+    options.Transport = new WebhookHttpTransportOptions
+    {
+        AttemptTimeout = TimeSpan.FromSeconds(30),
+    };
 });
 
 webhooks.AddHostedDispatcher();
 ```
 
-`AddHostedDispatcher()` é opt-in. A integração depende de `Microsoft.Extensions.*` e não exige ASP.NET Core.
+`AddHostedDispatcher()` é opt-in. Sem ele, a aplicação pode resolver e executar `WebhookDispatcher` diretamente. O transporte padrão usa `IHttpClientFactory`, exige destinos HTTPS, desabilita redirects automáticos e cookies, remove os loggers padrão de requisição do `HttpClientFactory` para evitar vazamento de paths ou queries de destino que contenham secrets, e configura `HttpClient.Timeout` como infinito para que `WebhookHttpTransportOptions.AttemptTimeout` continue sendo o timeout autoritativo de cada tentativa. Handlers ou configurações adicionais podem ser aplicados através de `ReliableWebhooksBuilder.HttpClientBuilder`. Construção direta de `WebhookHttpTransport` usa o `HttpClient` fornecido pelo chamador do jeito que ele estiver configurado, incluindo qualquer política de cookies do handler.
 
-## Garantias de entrega
+ReliableWebhooks trata destinos como confiáveis pelo operador por padrão depois de validar que são URIs HTTP/HTTPS absolutas, mas o transporte rejeita `http://` em texto claro salvo quando `WebhookHttpTransportOptions.AllowInsecureHttp` é configurado explicitamente. Use esse opt-in apenas para desenvolvimento, loopback ou uma rede em texto claro deliberadamente confiável. Assinatura HMAC não oferece confidencialidade nem autenticação de servidor TLS. Aplicações que aceitam URLs de tenants ou outra origem não confiável também devem configurar `WebhookHttpTransportOptions.DestinationPolicy`, por exemplo com `new PublicNetworkWebhookDestinationPolicy(allowedHosts: ["internal-webhooks.example"])`. Essa policy resolve DNS antes de cada tentativa e nega destinos loopback, unspecified, multicast, link-local, privados, carrier-grade compartilhados, de documentação, benchmarking, transição, reservados e outros destinos de uso especial para IPv4 e IPv6, salvo quando um host é explicitamente permitido. Uma negação determinística de destino é uma falha permanente e não é retentada. Com `HttpClient` padrão, a validação acontece antes de `SendAsync`; mantenha redirects automáticos desabilitados e use allow-list exata para destinos de intranet intencionais para evitar bypasses amplos de SSRF.
 
-ReliableWebhooks foi projetado para **at-least-once delivery**, não exactly-once. Por isso, receivers devem ser idempotentes.
+Classifier de resposta, política de retry, transporte e dispatcher usam registros substituíveis por DI. Store e signer são fornecidos pela aplicação, e as abstrações de temporização do dispatcher ou fonte de jitter também podem ser substituídas. Opções inválidas de dispatcher, retry, transporte ou assinatura são validadas na resolução das opções e pela validação de startup do Generic Host.
 
-Um store durável aderente ao contrato é responsável por enqueue durável, claims atômicos, ownership por lease, rejeição de owner obsoleto, agendamento de retries e persistência dentro da fronteira de durabilidade que anuncia.
+O código da aplicação pode fazer enqueue sem conhecer os detalhes de agendamento da persistência:
 
-O pacote core não exige EF Core, Dapper, Redis, arquivos, banco relacional ou outra tecnologia específica de persistência.
+```csharp
+IWebhookEnqueueService webhookEnqueue =
+    serviceProvider.GetRequiredService<IWebhookEnqueueService>();
 
-## Padrões seguros
+await webhookEnqueue.EnqueueAsync(message, cancellationToken);
+```
 
-A integração padrão exige destinos HTTPS, desabilita redirects e cookies automáticos, valida metadados de protocolo, limita tamanhos de mensagens de saída e suporta autorização de destino quando a aplicação aceita URLs de webhook não confiáveis.
+`IWebhookEnqueueService` aplica `ReliableWebhooksOptions.MessageLimits` antes de persistir uma entrega. Os padrões permitem payload de 1 MiB, 32 headers customizados persistidos, 16 KiB de bytes agregados de nomes/valores de headers customizados, IDs de webhook com 128 caracteres, tipos de evento com 128 caracteres, content types com 256 caracteres e URIs de destino com 2048 caracteres. Aumente esses limites apenas para receivers e tenants que realmente precisem de mensagens maiores, e combine-os com quotas da aplicação para que um tenant não consuma toda a fila. Código que chama `IWebhookDeliveryStore.EnqueueAsync` diretamente também contorna o gate padrão de produção; nesse caminho, chame `WebhookMessageLimits.Validate(message)` explicitamente ou aplique limites equivalentes na borda da aplicação.
 
-O signer nativo usa HMAC-SHA256 com envelope canônico versionado que autentica timestamp, ID estável do webhook, tipo de evento, content type e bytes exatos do payload. Aplicações de produção devem proteger os dados persistidos conforme seu threat model.
+A integração depende apenas de `Microsoft.Extensions.*`; ela não exige ASP.NET Core.
 
-Consulte [Uso em produção](docs/production-usage.md) para orientações completas sobre segurança, persistência, assinatura, retry e operação.
+### Assinando webhooks
+
+A assinatura é habilitada fornecendo um `IWebhookRequestSigner`. O `HmacSha256WebhookRequestSigner` nativo resolve os bytes do segredo através de `IWebhookSigningSecretProvider`, portanto a biblioteca não precisa saber se o segredo vem de configuração, secret manager ou outra fonte segura. Ele exige pelo menos 32 bytes (256 bits) de material de chave HMAC gerado criptograficamente e rejeita segredos vazios ou mais curtos antes de assinar. Gere esses bytes com um CSPRNG e armazene-os em um secret manager; não use senhas, passphrases, nomes de tenants ou outras strings de baixa entropia como segredos de assinatura.
+
+```csharp
+IWebhookSigningSecretProvider secretProvider = GetApplicationSecretProvider();
+IWebhookRequestSigner signer = new HmacSha256WebhookRequestSigner(secretProvider);
+
+var transport = new WebhookHttpTransport(
+    httpClient,
+    classifier: null,
+    options: null,
+    signer: signer);
+```
+
+Com o `WebhookSigningOptions` padrão, cada requisição assinada contém:
+
+- `X-Webhook-Id`: o `WebhookMessage.Id` estável;
+- `X-Webhook-Event`: o `WebhookMessage.EventType`;
+- `Content-Type`: o `WebhookMessage.ContentType` normalizado;
+- `X-Webhook-Timestamp`: o timestamp UTC em Unix seconds;
+- `X-Webhook-Signature`: `v1=<digest HMAC-SHA256 hexadecimal em minúsculas>`.
+
+Os nomes dos headers podem ser customizados através de `WebhookHttpTransportOptions.Signing`. Headers gerados pela assinatura têm precedência sobre headers customizados da mensagem com o mesmo nome.
+
+`WebhookMessage.Id` e `WebhookMessage.EventType` devem ser não vazios e não podem conter caracteres de controle como CR, LF ou NUL porque são usados em headers gerados e telemetria. `WebhookMessage.ContentType` deve ser um media type HTTP sintaticamente válido, incluindo media types de fornecedor como `application/vnd.example+json`.
+
+Headers customizados fornecidos ao `WebhookMessage` devem usar nomes válidos de token HTTP, são comparados sem diferenciar maiúsculas/minúsculas para detectar duplicidade e não podem conter caracteres de controle como CR, LF ou NUL nos valores. O transporte padrão reserva headers de roteamento e framing que dados da mensagem não podem controlar: `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `TE`, `Trailer`, `Upgrade`, `Expect`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization` e `Proxy-Connection`. Headers sensíveis de credencial, como `Authorization` e `Cookie`, não são aceitos na mensagem persistida; resolva-os no momento do envio por meio de `IWebhookRequestHeaderProvider` para que tentativas enfileiradas observem rotação sem regravar entregas armazenadas. Trate valores de headers customizados como sensíveis quando vierem de tenants, assinantes ou outra configuração externa. Usuários avançados que precisem de controle HTTP de nível mais baixo devem fornecer um `IWebhookDeliveryTransport` customizado.
+
+A entrada canônica `v1` do HMAC é versionada e usa frames com tamanho prefixado:
+
+```text
+ASCII("rw-hmac-sha256/v1\0")
+|| frame(UTF8(unixTimestampSeconds))
+|| frame(UTF8(webhookId))
+|| frame(UTF8(eventType))
+|| frame(UTF8(contentType))
+|| frame(exactRequestPayloadBytes)
+```
+
+Cada `frame(value)` usa oito bytes big-endian para o tamanho, seguidos pelos bytes exatos do valor. O payload não é serializado novamente nem normalizado antes da assinatura. O mesmo array de bytes é usado tanto no cálculo do HMAC quanto no conteúdo da requisição HTTP. O content type é normalizado pelo parser de media type HTTP da plataforma quando o `WebhookMessage` é criado, então o frame autenticado de content type corresponde ao header `Content-Type` serializado pelo transporte padrão. Os valores autenticados são timestamp, ID do webhook, tipo de evento, content type e bytes do corpo. Headers customizados, URI de destino e os nomes configuráveis dos headers de assinatura não fazem parte do envelope HMAC nativo.
+
+Um receptor pode validar uma entrega de forma independente:
+
+1. lendo ID, evento, timestamp, assinatura e content type gerados sem modificar o corpo da requisição;
+2. interpretando o timestamp como Unix seconds e rejeitando timestamps fora da janela de tolerância contra replay;
+3. reconstruindo os frames canônicos `rw-hmac-sha256/v1` com esses metadados e os bytes brutos do corpo;
+4. calculando HMAC-SHA256 com o segredo compartilhado;
+5. codificando o digest em hexadecimal minúsculo e prefixando com `v1=`;
+6. comparando a assinatura calculada com a recebida em tempo constante.
+
+Segredos de assinatura nunca são incluídos em mensagens de exceção geradas pela biblioteca nem em telemetria automática. Aplicações devem manter a mesma regra em providers de segredo e signers customizados. Faça rotação de segredos pelo provider da aplicação e pela configuração do receiver, e use segredos diferentes para públicos de confiança ou receivers distintos para que o comprometimento de um receiver não permita forjar assinaturas para outro.
 
 ## Observabilidade
 
-ReliableWebhooks emite telemetria pelas APIs padrão do .NET e não exige backend específico.
+ReliableWebhooks emite telemetria pelas APIs padrão do .NET e **não** depende do SDK do OpenTelemetry, de collector ou de exporter. A aplicação decide se a telemetria será coletada e para onde ela será enviada.
+
+A classe pública `ReliableWebhooksInstrumentation` expõe os nomes canônicos usados pela biblioteca:
 
 ```csharp
 ReliableWebhooksInstrumentation.ActivitySourceName // "ReliableWebhooks"
 ReliableWebhooksInstrumentation.MeterName          // "ReliableWebhooks"
 ```
 
-As métricas nativas evitam cardinalidade ilimitada de tipo de evento por padrão. A aplicação pode integrar o activity source e o meter com a stack de OpenTelemetry/exporter que preferir.
+A mesma classe expõe nomes estáveis para a activity de tentativa de entrega e para as métricas publicadas, evitando que integrações dupliquem strings de instrumentação.
 
-## Limites da v1.0.0
+### Logs estruturados
 
-A primeira release pública mantém a persistência intencionalmente independente de tecnologia:
+`WebhookDispatcher` possui um overload aditivo de construtor que recebe `ILogger`. Os construtores existentes continuam válidos e usam um logger no-op. A telemetria de enqueue é fornecida por `InstrumentedWebhookDeliveryStore`, um decorator que pode envolver qualquer `IWebhookDeliveryStore`, inclusive um store durável customizado de produção.
 
-- nenhum store durável de produção é incluído no core;
-- `InMemoryWebhookDeliveryStore` permanece não durável;
-- exactly-once delivery não é garantido;
-- idempotência no receiver continua sendo responsabilidade da aplicação;
-- adapters de persistência de produção podem ser implementados de forma independente do pacote core.
+```csharp
+ILogger logger = loggerFactory.CreateLogger("ReliableWebhooks");
 
-## Documentação
+IWebhookDeliveryStore durableStore = GetApplicationWebhookStore();
+IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+    durableStore,
+    logger);
 
-- [Uso em produção](docs/production-usage.md)
-- [Contrato de persistência](docs/persistence.pt-BR.md)
-- [Contrato da release v1.0.0](docs/release-v1.0.0.md)
-- [SonarQube Cloud](docs/sonarqube-cloud.pt-BR.md)
-- [Contribuindo](CONTRIBUTING.md)
-- [Changelog](CHANGELOG.md)
+var dispatcher = new WebhookDispatcher(
+    store,
+    transport,
+    retryPolicy,
+    options,
+    delay: null,
+    logger);
+```
 
-## Suporte e licença
+`InstrumentedWebhookDeliveryStore` emite o evento de enqueue e a métrica de queued apenas quando uma nova entrega é persistida de fato. Chamadas idempotentes duplicadas de enqueue não contam duas vezes a mesma entrega. A telemetria de claim é emitida por `WebhookDispatcher`, então o mesmo claim é registrado uma única vez e stores customizados recebem a mesma cobertura de ciclo de vida.
 
-Use [GitHub Issues](https://github.com/rodri-oliveira-dev/ReliableWebhooks/issues) para bugs, dúvidas e discussão de funcionalidades. Para questões de segurança, siga [SECURITY.md](SECURITY.md).
+O ciclo de vida usa event IDs estáveis para enqueue, claim, início de tentativa, sucesso, agendamento de retry, falha permanente, dead letter, cancelamento, perda de lease e falha inesperada. As propriedades de log excluem deliberadamente payload, URLs de destino/query string, segredos de assinatura e assinaturas.
 
-ReliableWebhooks é licenciado sob a [MIT License](LICENSE).
+### Traces
+
+Cada tentativa do dispatcher cria uma activity `ReliableWebhooks.DeliveryAttempt` no activity source `ReliableWebhooks`. Atributos seguros incluem ID do webhook para correlação, tipo de evento, número da tentativa, resultado, status HTTP quando houver e tipo da exceção inesperada.
+
+Payloads, segredos, assinaturas e URLs de destino não são adicionados automaticamente. IDs de webhook podem aparecer em traces para correlação, mas não são usados como dimensões de métricas.
+
+### Métricas
+
+| Instrumento | Tipo | Tags |
+| --- | --- | --- |
+| `reliablewebhooks.delivery.queued` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.attempted` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.succeeded` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.retried` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.permanently_failed` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.dead_lettered` | Counter | Nenhuma por padrão |
+| `reliablewebhooks.delivery.duration` | Histogram em milissegundos | `webhook.outcome` |
+
+`WebhookMessage.EventType` bruto não é usado como dimensão de métrica por padrão. Para habilitar uma tag de tipo de evento, configure `WebhookMetricsOptions.EventTypeTagAllowList` com um vocabulário limitado; valores fora da allow-list são reportados como `other`. Nunca inclua IDs de cliente, request IDs, destinos, IDs de webhook, payloads, assinaturas ou outros valores sensíveis/de alta cardinalidade em dimensões de métricas.
+
+### Integração com OpenTelemetry
+
+O consumidor pode habilitar OpenTelemetry com seus próprios pacotes e exporters. ReliableWebhooks não exige nenhum deles:
+
+```csharp
+builder.Services
+    .AddOpenTelemetry()
+    .WithTracing(tracing =>
+        tracing.AddSource(ReliableWebhooksInstrumentation.ActivitySourceName))
+    .WithMetrics(metrics =>
+        metrics.AddMeter(ReliableWebhooksInstrumentation.MeterName));
+```
+
+A aplicação pode então adicionar OTLP, Azure Monitor, Prometheus, Grafana/Tempo, Datadog, Dynatrace ou outro exporter/backend suportado sem alterar ReliableWebhooks. Logs continuam usando `ILogger` e podem ser conectados de forma independente ao pipeline de logging/OpenTelemetry escolhido pela aplicação.
+
+## Comportamento padrão
+
+| Área | Padrão |
+| --- | --- |
+| Concorrência máxima do dispatcher | 4 |
+| Duração da lease | 1 minuto |
+| Intervalo de polling | 1 segundo |
+| Grace period de shutdown | 30 segundos |
+| Timeout de tentativa HTTP | 30 segundos |
+| Corpo de resposta capturado | Até 16 KiB |
+| Tamanho de payload de saída | Até 1 MiB via `IWebhookEnqueueService` |
+| Headers customizados persistidos | Até 32 headers e 16 KiB agregados de nomes/valores via `IWebhookEnqueueService` |
+| Tamanho de metadados persistidos | ID/tipo do evento até 128 caracteres, content type até 256 e URI de destino até 2048 via `IWebhookEnqueueService` |
+| Destinos HTTP sem TLS | Rejeitados salvo com `AllowInsecureHttp = true` |
+| Classificação de sucesso | Qualquer resposta `2xx` |
+| Respostas HTTP retryable | `408`, `425`, `429` e `5xx` |
+| Respostas HTTP permanentes | Outros status codes, incluindo redirects |
+| Algoritmo de assinatura | HMAC-SHA256 quando um signer está configurado |
+| Formato canônico de assinatura | marcador `rw-hmac-sha256/v1` mais timestamp, ID do webhook, tipo do evento, content type e bytes do payload com tamanho prefixado |
+| Headers de assinatura | `X-Webhook-Id`, `X-Webhook-Event`, `X-Webhook-Timestamp`, `X-Webhook-Signature` |
+| Máximo de tentativas | 5, incluindo a tentativa atual |
+| Delay base de retry | 1 segundo |
+| Delay máximo de retry | 5 minutos |
+| Jitter | 0 a 20% de jitter positivo antes do limite máximo |
+| `Retry-After` | Respeitado quando agenda depois do delay local; `MaxDelay` limita apenas backoff/jitter locais |
+
+Redirects automáticos e cookies automáticos precisam ficar desabilitados para que uma chamada do transporte não se transforme silenciosamente em múltiplas requisições nem preserve estado controlado pelo receptor para entregas futuras. O cliente gerenciado pela integração de DI já aplica essa configuração.
+
+Valores malformados de `Retry-After` são ignorados. Valores válidos em delta-seconds e HTTP-date são expostos por `WebhookDeliveryResult` e consumidos pela política de retry padrão.
+
+## Garantias e limites de entrega
+
+ReliableWebhooks trabalha com semântica explícita de entrega:
+
+- **At-least-once, não exactly-once.** Entregas duplicadas podem acontecer, especialmente quando um worker envia e falha antes de persistir o resultado.
+- **IDs estáveis tornam o enqueue duplicate-safe.** O receptor ainda precisa de idempotência no nível da aplicação.
+- **Limites de recursos da mensagem protegem a fila.** O serviço padrão de enqueue rejeita payloads, headers e metadados persistidos grandes demais antes da escrita no store. A aplicação ainda deve aplicar quotas por tenant e restrições de payload de negócio.
+- **Leases coordenam ownership ativo.** Enquanto uma lease é válida, dois workers não devem possuir a mesma entrega simultaneamente; trabalho expirado pode ser recuperado.
+- **A concorrência do dispatcher é limitada.** Claims respeitam os slots disponíveis e não criam tasks ilimitadas.
+- **O shutdown ocorre em duas fases.** Novos claims param primeiro; trabalho em andamento pode terminar durante o grace period antes de ser cancelado.
+- **Uma chamada ao transporte corresponde a uma tentativa HTTP.** Loops de retry ficam fora do transporte.
+- **Falhas de extensões por entrega são isoladas.** Exceções de transporte/assinatura/classificação de uma entrega são registradas pelo tipo da exceção e seguem retry/dead letter; falhas de claim e transição no store continuam sendo falhas de infraestrutura.
+- **Payloads assinados usam os bytes exatos da requisição.** O receptor deve validar o corpo bruto, não uma versão parseada e serializada novamente.
+- **Políticas de retry agendam; elas não aguardam.** `DefaultWebhookRetryPolicy` retorna um timestamp futuro ou decisão de dead letter.
+- **A telemetria é independente de backend.** Exporters continuam sob responsabilidade da aplicação.
+- **A persistência é substituível.** O pacote principal não depende de um provider de banco específico.
+
+A v1.0.0 de `ReliableWebhooks` não exige um adapter de persistência de produção nativo. A aplicação fornece um `IWebhookDeliveryStore` durável compatível; adapters opcionais para EF Core, Dapper, Redis, arquivos ou outras tecnologias podem ser introduzidos de forma independente.
+
+## Extensibilidade
+
+Os principais comportamentos são expostos por abstrações públicas:
+
+- `IWebhookDeliveryStore` — persistência e coordenação por lease;
+- `InstrumentedWebhookDeliveryStore` — decorator que adiciona logs de enqueue e métrica queued a qualquer store;
+- `IWebhookEnqueueService` — API de enqueue voltada para a aplicação e registrada pela integração de DI;
+- `IWebhookDeliveryTransport` — transporte de uma tentativa usado pelo dispatcher;
+- `IWebhookDispatcherDelay` — temporização substituível para polling/grace period;
+- `IWebhookHttpResponseClassifier` — classificação de respostas HTTP;
+- `IWebhookRetryPolicy` — decisões de retry e dead letter;
+- `IWebhookRetryJitterSource` — geração de jitter substituível;
+- `IWebhookDestinationPolicy` — autorização de destinos para URLs de webhook não confiáveis;
+- `IWebhookRequestSigner` — estratégia de assinatura;
+- `IWebhookSigningSecretProvider` — resolução de segredo por mensagem;
+- `ReliableWebhooksInstrumentation` — nomes públicos e estáveis de diagnostics.
+
+`ReliableWebhooksOptions` agrupa a configuração de dispatcher, limites de mensagem, retry, transporte e signing para consumidores via DI. `WebhookDispatcherOptions` mantém `MaxConcurrency`, `LeaseDuration`, `PollInterval`, `ShutdownGracePeriod` e `TimeProvider` configuráveis e testáveis. `WebhookMessageLimits` expõe a fronteira padrão de recursos por mensagem usada por `IWebhookEnqueueService` e também pode ser aplicada explicitamente por aplicações que fazem enqueue diretamente pelo store.
+
+## Suporte e contribuição
+
+Use [GitHub Issues](https://github.com/rodri-oliveira-dev/ReliableWebhooks/issues) para bugs, dúvidas e discussão de funcionalidades.
+
+Para problemas de segurança, siga [SECURITY.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/SECURITY.md) em vez de abrir uma issue pública.
+
+Contribuições são bem-vindas. Consulte [CONTRIBUTING.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/CONTRIBUTING.md) para o fluxo de contribuição e [CHANGELOG.md](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/CHANGELOG.md) para mudanças relevantes.
+
+ReliableWebhooks é licenciado sob a [MIT License](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/LICENSE).
