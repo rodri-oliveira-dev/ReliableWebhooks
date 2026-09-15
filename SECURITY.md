@@ -22,6 +22,19 @@ Include enough detail to help maintainers reproduce and assess the issue:
 - a minimal reproduction or proof of concept;
 - expected impact and any known mitigations.
 
+## Automated Security Baseline
+
+ReliableWebhooks treats webhook payloads and delivery metadata as untrusted external input, so repository security uses layered controls:
+
+- CodeQL runs C# analysis with the `security-extended` query suite using the same locked restore and Release build contract used by the repository;
+- Dependency Review evaluates dependency changes introduced by pull requests;
+- Dependabot maintains NuGet packages, the .NET SDK declared by `global.json`, and GitHub Actions references;
+- SonarQube Cloud and CI provide complementary static analysis, build, test, and package validation.
+
+The `security-extended` suite intentionally trades a small amount of precision for broader security coverage. Findings must be triaged on their technical merit rather than suppressed solely to keep automation green.
+
+.NET SDK updates are proposed as dedicated Dependabot pull requests so compiler/toolchain changes remain explicit and reviewable. Major SDK upgrades require compatibility review before merge.
+
 ## Triage Expectations
 
 Maintainers should acknowledge and triage reports as soon as reasonably possible. Response and fix timelines depend on severity, maintainer availability, release complexity, and coordinated disclosure needs.
