@@ -29,16 +29,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configurar .NET 10
+      - name: Configurar .NET pelo global.json
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Inicializar CodeQL
         uses: github/codeql-action/init@4c0873ef8656cb3c50b3f42fb63bc1ade0cfa827 # v4
         with:
           languages: csharp
           build-mode: manual
+          queries: security-extended
 
       - name: Restaurar dependências em locked mode
         run: dotnet restore ReliableWebhooks.slnx --locked-mode
