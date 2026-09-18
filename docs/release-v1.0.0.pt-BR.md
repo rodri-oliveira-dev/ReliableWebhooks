@@ -10,6 +10,7 @@ O workflow oficial de release valida um único release candidate imutável conte
 
 - `ReliableWebhooks.<version>.nupkg`;
 - `ReliableWebhooks.<version>.snupkg`;
+- `ReliableWebhooks.<version>.sbom.spdx.json`;
 - `release-manifest.json`;
 - `SHA256SUMS`.
 
@@ -17,8 +18,9 @@ O artifact validado é reutilizado sem rebuild para todos os destinos de distrib
 
 - publicação do pacote e do pacote de símbolos no NuGet.org com GitHub OIDC e NuGet Trusted Publishing;
 - publicação no GitHub Packages com o `GITHUB_TOKEN` escopado;
-- anexos da GitHub Release com pacote, símbolos, manifest e checksums;
-- attestations do GitHub para os mesmos arquivos de release.
+- anexos da GitHub Release com pacote, símbolos, SBOM SPDX, manifest e checksums;
+- attestations de build provenance do GitHub para os arquivos de release;
+- uma SBOM attestation SPDX assinada e vinculada ao `.nupkg` publicado.
 
 Nenhuma API key duradoura do NuGet é armazenada no repositório.
 
@@ -42,11 +44,11 @@ Pull requests que alteram arquivos relevantes de release/package executam apenas
 
 Os jobs oficiais rodam nesta ordem:
 
-1. `build-and-pack`: valida SemVer e branch, restaura dependências em locked mode, verifica formatação, compila em Release, executa testes, valida `PublicApi.v1.0.0.txt`, empacota, valida metadados do pacote, símbolos e Source Link, executa validação de consumidor limpo com `IWebhookDeliveryStore` customizado, escreve manifest/checksums e publica um único artifact imutável de release candidate.
+1. `build-and-pack`: valida SemVer e branch, restaura dependências em locked mode, verifica formatação, compila em Release, executa testes, valida `PublicApi.v1.0.0.txt`, empacota, valida metadados do pacote, símbolos e Source Link, executa validação de consumidor limpo com `IWebhookDeliveryStore` customizado, gera uma SBOM SPDX JSON a partir do `.nupkg` final, valida a SBOM, escreve manifest/checksums e publica um único artifact imutável de release candidate.
 2. `ensure-release-tag`: cria `v<version>` apenas para o SHA validado. Se a tag já aponta para o mesmo SHA, aceita; se aponta para qualquer outro SHA, falha. Tags existentes nunca são movidas.
 3. `publish-nuget`: quando `NUGET_USER` está configurada, entra no Environment `release`, troca GitHub OIDC por uma API key temporária com `NuGet/login`, baixa o artifact validado, confere manifest/checksums e publica somente esses arquivos baixados. Quando `NUGET_USER` está ausente, este job é pulado.
 4. `publish-github-packages`: entra no Environment `release`, baixa o mesmo artifact validado, confere manifest/checksums e publica o pacote validado no GitHub Packages sem rebuild.
-5. `github-release`: roda depois que GitHub Packages passa e depois que NuGet.org passa ou é pulado por configuração, verifica o mesmo artifact, cria ou retoma um draft de release, anexa os arquivos validados, gera attestations e publica a GitHub Release.
+5. `github-release`: roda depois que GitHub Packages passa e depois que NuGet.org passa ou é pulado por configuração, verifica o mesmo artifact, cria ou retoma um draft de release, anexa os arquivos validados, gera as attestations de build provenance e a SBOM attestation do pacote, e publica a GitHub Release.
 
 ## Publicação idempotente
 
@@ -75,9 +77,30 @@ Isso torna seguro reexecutar uma release após publicação parcial: trabalho j�
 
 ## Integridade do release candidate
 
-`release-manifest.json` registra nomes e SHA-256 do pacote e do pacote de símbolos para o commit validado. `SHA256SUMS` é determinístico e contém uma linha para `.nupkg`, `.snupkg` e `release-manifest.json`, nessa ordem.
+`release-manifest.json` registra nomes e SHA-256 do pacote, do pacote de símbolos e da SBOM SPDX para o commit validado. `SHA256SUMS` é determinístico e contém uma linha para `.nupkg`, `.snupkg`, SBOM e `release-manifest.json`, nessa ordem.
 
-Todo job de publicação baixa o artifact produzido por `build-and-pack` e o verifica com `scripts/release-candidate.cs` antes de publicar em registry ou release. Nenhum pacote é reconstruído entre validação e publicação.
+Todo job de publicação baixa o artifact produzido por `build-and-pack` e o verifica com `scripts/release-candidate.cs` antes de publicar em registry ou release. Nenhum pacote ou SBOM é regenerado entre validação e publicação.
+
+## Verificação das Artifact Attestations
+
+Depois de baixar o `.nupkg` da release, verifique a build provenance SLSA com GitHub CLI:
+
+```bash
+gh attestation verify ReliableWebhooks.<version>.nupkg \
+  --repo rodri-oliveira-dev/ReliableWebhooks \
+  --signer-workflow rodri-oliveira-dev/ReliableWebhooks/.github/workflows/release.yml
+```
+
+O pacote também possui uma SBOM attestation SPDX 2.3 vinculada ao mesmo `.nupkg`. Para verificar especificamente esse predicate:
+
+```bash
+gh attestation verify ReliableWebhooks.<version>.nupkg \
+  --repo rodri-oliveira-dev/ReliableWebhooks \
+  --signer-workflow rodri-oliveira-dev/ReliableWebhooks/.github/workflows/release.yml \
+  --predicate-type https://spdx.dev/Document/v2.3
+```
+
+O asset independente `ReliableWebhooks.<version>.sbom.spdx.json` da GitHub Release também está coberto por `SHA256SUMS`, permitindo verificar seus bytes baixados junto com os demais metadados da release.
 
 ## Gate do release candidate
 
@@ -87,7 +110,7 @@ Antes de rodar o workflow oficial, verifique que:
 
 - `CI`, `CodeQL` e `Dependency Review` estão verdes no commit protegido de `main`;
 - `dotnet tool restore`, restore em locked mode, formatação, build Release, todos os testes, cobertura, validação de pacote, validação de API pública, sample E2E, validação de consumidor limpo, geração de manifest/checksums e verificação do release candidate passam para o mesmo SHA;
-- `.nupkg`, `.snupkg`, `release-manifest.json` e `SHA256SUMS` gerados são os artifacts exatos consumidos pelos jobs de publicação;
+- `.nupkg`, `.snupkg`, SBOM SPDX, `release-manifest.json` e `SHA256SUMS` gerados são os artifacts exatos consumidos pelos jobs de publicação;
 - a política de Trusted Publishing do NuGet.org e a variável `NUGET_USER` estão configuradas quando publicação no NuGet.org for exigida;
 - nenhuma API key duradoura do NuGet, segredo de assinatura, URL de webhook com credencial, payload, header de autorização, cookie ou outro segredo de entrega é commitado ou emitido nos artifacts.
 
