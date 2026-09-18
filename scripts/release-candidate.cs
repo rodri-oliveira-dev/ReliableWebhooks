@@ -36,11 +36,13 @@ static int WriteManifest(string[] args)
         "--package-id",
         "--package",
         "--symbols",
+        "--sbom",
         "--output",
         "--checksums-output");
 
     var packagePath = Path.GetFullPath(options["--package"]);
     var symbolsPath = Path.GetFullPath(options["--symbols"]);
+    var sbomPath = Path.GetFullPath(options["--sbom"]);
     var manifestPath = Path.GetFullPath(options["--output"]);
     var checksumsPath = Path.GetFullPath(options["--checksums-output"]);
 
@@ -54,8 +56,14 @@ static int WriteManifest(string[] args)
         throw new FileNotFoundException("Release symbol package was not found.", symbolsPath);
     }
 
+    if (!File.Exists(sbomPath))
+    {
+        throw new FileNotFoundException("Release SBOM was not found.", sbomPath);
+    }
+
     var packageHash = ComputeSha256(packagePath);
     var symbolsHash = ComputeSha256(symbolsPath);
+    var sbomHash = ComputeSha256(sbomPath);
     var manifest = new ReleaseManifest(
         options["--version"],
         options["--tag"],
@@ -64,7 +72,9 @@ static int WriteManifest(string[] args)
         Path.GetFileName(packagePath),
         packageHash,
         Path.GetFileName(symbolsPath),
-        symbolsHash);
+        symbolsHash,
+        Path.GetFileName(sbomPath),
+        sbomHash);
 
     Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
     Directory.CreateDirectory(Path.GetDirectoryName(checksumsPath)!);
@@ -81,6 +91,7 @@ static int WriteManifest(string[] args)
         {
             $"{packageHash}  {Path.GetFileName(packagePath)}",
             $"{symbolsHash}  {Path.GetFileName(symbolsPath)}",
+            $"{sbomHash}  {Path.GetFileName(sbomPath)}",
             $"{manifestHash}  {Path.GetFileName(manifestPath)}"
         });
 
@@ -99,11 +110,13 @@ static int VerifyCandidate(string[] args)
         "--package-id",
         "--package",
         "--symbols",
+        "--sbom",
         "--manifest",
         "--checksums");
 
     var packagePath = Path.GetFullPath(options["--package"]);
     var symbolsPath = Path.GetFullPath(options["--symbols"]);
+    var sbomPath = Path.GetFullPath(options["--sbom"]);
     var manifestPath = Path.GetFullPath(options["--manifest"]);
     var checksumsPath = Path.GetFullPath(options["--checksums"]);
 
@@ -115,6 +128,11 @@ static int VerifyCandidate(string[] args)
     if (!File.Exists(symbolsPath))
     {
         throw new FileNotFoundException("Release symbol package was not found.", symbolsPath);
+    }
+
+    if (!File.Exists(sbomPath))
+    {
+        throw new FileNotFoundException("Release SBOM was not found.", sbomPath);
     }
 
     if (!File.Exists(manifestPath))
@@ -138,15 +156,19 @@ static int VerifyCandidate(string[] args)
     AssertEqual(options["--package-id"], manifest.PackageId, "manifest packageId");
     AssertEqual(Path.GetFileName(packagePath), manifest.PackageFileName, "manifest packageFileName");
     AssertEqual(Path.GetFileName(symbolsPath), manifest.SymbolsFileName, "manifest symbolsFileName");
+    AssertEqual(Path.GetFileName(sbomPath), manifest.SbomFileName, "manifest sbomFileName");
 
     var packageHash = ComputeSha256(packagePath);
     var symbolsHash = ComputeSha256(symbolsPath);
+    var sbomHash = ComputeSha256(sbomPath);
     AssertEqual(packageHash, manifest.PackageSha256, "manifest packageSha256");
     AssertEqual(symbolsHash, manifest.SymbolsSha256, "manifest symbolsSha256");
+    AssertEqual(sbomHash, manifest.SbomSha256, "manifest sbomSha256");
 
     var checksums = ParseChecksums(checksumsPath);
     AssertChecksum(checksums, packagePath, packageHash);
     AssertChecksum(checksums, symbolsPath, symbolsHash);
+    AssertChecksum(checksums, sbomPath, sbomHash);
     AssertChecksum(checksums, manifestPath, ComputeSha256(manifestPath));
 
     Console.WriteLine($"Release candidate verified: {Path.GetFileName(packagePath)}");
@@ -246,11 +268,11 @@ static void PrintUsage()
     Console.Error.WriteLine(
         "Usage: dotnet run --file scripts/release-candidate.cs -- manifest "
         + "--version <version> --tag <tag> --commit <sha> --package-id <id> "
-        + "--package <nupkg> --symbols <snupkg> --output <manifest> --checksums-output <SHA256SUMS>");
+        + "--package <nupkg> --symbols <snupkg> --sbom <sbom> --output <manifest> --checksums-output <SHA256SUMS>");
     Console.Error.WriteLine(
         "   or: dotnet run --file scripts/release-candidate.cs -- verify "
         + "--version <version> --tag <tag> --commit <sha> --package-id <id> "
-        + "--package <nupkg> --symbols <snupkg> --manifest <manifest> --checksums <SHA256SUMS>");
+        + "--package <nupkg> --symbols <snupkg> --sbom <sbom> --manifest <manifest> --checksums <SHA256SUMS>");
 }
 
 public sealed record ReleaseManifest(
@@ -261,7 +283,9 @@ public sealed record ReleaseManifest(
     string PackageFileName,
     string PackageSha256,
     string SymbolsFileName,
-    string SymbolsSha256);
+    string SymbolsSha256,
+    string SbomFileName,
+    string SbomSha256);
 
 [JsonSourceGenerationOptions(
     WriteIndented = true,
