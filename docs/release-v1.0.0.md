@@ -10,6 +10,7 @@ The official release workflow validates one immutable release candidate containi
 
 - `ReliableWebhooks.<version>.nupkg`;
 - `ReliableWebhooks.<version>.snupkg`;
+- `ReliableWebhooks.<version>.sbom.spdx.json`;
 - `release-manifest.json`;
 - `SHA256SUMS`.
 
@@ -17,8 +18,9 @@ The validated artifact is then reused without rebuilding for every distribution 
 
 - NuGet.org package and symbol-package publication through GitHub OIDC and NuGet Trusted Publishing;
 - GitHub Packages publication with the scoped `GITHUB_TOKEN`;
-- GitHub Release attachments for the package, symbols, manifest, and checksums;
-- GitHub artifact attestations for the same release files.
+- GitHub Release attachments for the package, symbols, SPDX SBOM, manifest, and checksums;
+- GitHub build-provenance attestations for the release files;
+- a signed SPDX SBOM attestation bound to the published `.nupkg`.
 
 No long-lived NuGet API key is stored by the repository.
 
@@ -42,11 +44,11 @@ Pull requests that touch release/package-relevant files run a dry validation pat
 
 Official release jobs run in this order:
 
-1. `build-and-pack`: validates SemVer and branch, restores locked dependencies, verifies formatting, builds Release, runs tests, validates `PublicApi.v1.0.0.txt`, packs, validates package metadata, symbols and Source Link, runs the clean consumer/custom `IWebhookDeliveryStore` validation, writes the release manifest and checksums, and uploads one immutable release candidate artifact.
+1. `build-and-pack`: validates SemVer and branch, restores locked dependencies, verifies formatting, builds Release, runs tests, validates `PublicApi.v1.0.0.txt`, packs, validates package metadata, symbols and Source Link, runs the clean consumer/custom `IWebhookDeliveryStore` validation, generates an SPDX JSON SBOM from the final `.nupkg`, validates it, writes the release manifest and checksums, and uploads one immutable release candidate artifact.
 2. `ensure-release-tag`: creates `v<version>` only for the validated SHA. If the tag already points to the same SHA it is accepted; if it points anywhere else the release fails. Existing tags are never moved.
 3. `publish-nuget`: when `NUGET_USER` is configured, enters the `release` environment, exchanges GitHub OIDC for a temporary NuGet API key through `NuGet/login`, downloads the validated artifact, verifies manifest/checksums, and publishes only those downloaded files. When `NUGET_USER` is absent, this job is skipped.
 4. `publish-github-packages`: enters the `release` environment, downloads the same validated artifact, verifies manifest/checksums, and publishes the validated package to GitHub Packages without rebuilding.
-5. `github-release`: runs after GitHub Packages succeeds and after NuGet.org either succeeds or is skipped by configuration, verifies the same artifact, creates or resumes a draft release, attaches the validated files, generates attestations, and publishes the GitHub Release.
+5. `github-release`: runs after GitHub Packages succeeds and after NuGet.org either succeeds or is skipped by configuration, verifies the same artifact, creates or resumes a draft release, attaches the validated files, generates build-provenance attestations plus the package SBOM attestation, and publishes the GitHub Release.
 
 ## Idempotent Publication
 
@@ -75,9 +77,30 @@ This makes a rerun after partial publication safe: already-completed registry wo
 
 ## Release Candidate Integrity
 
-`release-manifest.json` records the package filename/SHA-256 and symbol-package filename/SHA-256 for the validated commit. `SHA256SUMS` is deterministic and contains one line each for the `.nupkg`, `.snupkg`, and `release-manifest.json` in that order.
+`release-manifest.json` records the package filename/SHA-256, symbol-package filename/SHA-256, and SPDX SBOM filename/SHA-256 for the validated commit. `SHA256SUMS` is deterministic and contains one line each for the `.nupkg`, `.snupkg`, SBOM, and `release-manifest.json` in that order.
 
-Every publishing job downloads the artifact produced by `build-and-pack` and verifies it through `scripts/release-candidate.cs` before doing registry or release work. No package is rebuilt between validation and publication.
+Every publishing job downloads the artifact produced by `build-and-pack` and verifies it through `scripts/release-candidate.cs` before doing registry or release work. No package or SBOM is regenerated between validation and publication.
+
+## Artifact Attestation Verification
+
+After downloading the release `.nupkg`, verify its SLSA build provenance with GitHub CLI:
+
+```bash
+gh attestation verify ReliableWebhooks.<version>.nupkg \
+  --repo rodri-oliveira-dev/ReliableWebhooks \
+  --signer-workflow rodri-oliveira-dev/ReliableWebhooks/.github/workflows/release.yml
+```
+
+The package also has an SPDX 2.3 SBOM attestation bound to the same `.nupkg`. Verify that predicate explicitly with:
+
+```bash
+gh attestation verify ReliableWebhooks.<version>.nupkg \
+  --repo rodri-oliveira-dev/ReliableWebhooks \
+  --signer-workflow rodri-oliveira-dev/ReliableWebhooks/.github/workflows/release.yml \
+  --predicate-type https://spdx.dev/Document/v2.3
+```
+
+The standalone `ReliableWebhooks.<version>.sbom.spdx.json` release asset is also covered by `SHA256SUMS`, so its downloaded bytes can be checked together with the other release metadata.
 
 ## Release Candidate Gate
 
@@ -87,7 +110,7 @@ Before running the official workflow, verify that:
 
 - `CI`, `CodeQL`, and `Dependency Review` are green on the protected `main` commit;
 - `dotnet tool restore`, locked restore, formatting, Release build, all tests, coverage, package validation, public API validation, sample E2E, clean consumer validation, release manifest/checksum generation, and release-candidate verification pass for the same SHA;
-- the generated `.nupkg`, `.snupkg`, `release-manifest.json`, and `SHA256SUMS` are the exact artifacts consumed by the publishing jobs;
+- the generated `.nupkg`, `.snupkg`, SPDX SBOM, `release-manifest.json`, and `SHA256SUMS` are the exact artifacts consumed by the publishing jobs;
 - the NuGet.org Trusted Publishing policy and `NUGET_USER` repository variable are configured when NuGet.org publication is required;
 - no long-lived NuGet API key, signing secret, credential-bearing webhook URL, payload, authorization header, cookie, or other delivery secret is committed or emitted through release artifacts.
 
