@@ -214,7 +214,7 @@ jobs:
         run: bash scripts/verify-package-consumer.sh artifacts/release "$RELEASE_VERSION"
 
       - name: Generate package SBOM
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           file: artifacts/release/${{ steps.package.outputs.package_id }}.${{ steps.release-metadata.outputs.version }}.nupkg
           format: spdx-json
