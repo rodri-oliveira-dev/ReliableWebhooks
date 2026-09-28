@@ -4,9 +4,9 @@
 [![Release](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/release.yml/badge.svg)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/actions/workflows/release.yml)
 [![NuGet](https://img.shields.io/nuget/v/ReliableWebhooks.svg)](https://www.nuget.org/packages/ReliableWebhooks/)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4)](https://dotnet.microsoft.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/LICENSE)
 
-**English** | [Português (Brasil)](README.pt-BR.md)
+**English** | [Português (Brasil)](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/README.pt-BR.md)
 
 ReliableWebhooks is a .NET 10 library for reliable outbound webhook delivery. It provides explicit primitives for durable enqueueing, lease-based dispatch, bounded concurrency, HTTP delivery, retry classification and scheduling, HMAC-SHA256 signing, observability, and Microsoft dependency injection/hosting.
 
@@ -21,7 +21,7 @@ Use it when an HTTP `POST` is not enough: deliveries must survive failures, coor
 - One `IWebhookDeliveryTransport.SendAsync` call represents one HTTP attempt; retry timing is handled separately by the retry policy and dispatcher.
 - Automatic dead-letter replay, receiver-side idempotency, and secret-rotation policy remain application responsibilities.
 
-For the complete production contract and operational guidance, see [Production usage](docs/production-usage.md) and the [Persistence contract](docs/persistence.md).
+For the complete production contract and operational guidance, see [Production usage](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/docs/production-usage.md) and the [Persistence contract](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/docs/persistence.md).
 
 ## Installation
 
@@ -91,7 +91,7 @@ await dispatcher.RunAsync(stop.Token);
 
 `AddHostedDispatcher()` is opt-in. Applications can instead resolve and run `WebhookDispatcher` directly when they need to own its lifecycle.
 
-A runnable end-to-end application with signing, success, retries, dead-letter behavior, and diagnostics is available in [`samples/ReliableWebhooks.Sample`](samples/ReliableWebhooks.Sample).
+A runnable end-to-end application with signing, success, retries, dead-letter behavior, and diagnostics is available in [`samples/ReliableWebhooks.Sample`](https://github.com/rodri-oliveira-dev/ReliableWebhooks/tree/main/samples/ReliableWebhooks.Sample).
 
 ## Delivery flow
 
@@ -119,11 +119,11 @@ The store must implement the durability, atomic claim, lease, stale-owner reject
 
 ## Read next
 
-- **Production usage:** [`docs/production-usage.md`](docs/production-usage.md) — DI/hosting, retry and response classification, signing and receiver verification, destination security, observability, configuration, tuning, and troubleshooting.
-- **Persistence contract:** [`docs/persistence.md`](docs/persistence.md) — durable state, idempotent enqueue, atomic claims, leases, ownership, transitions, and conformance testing.
-- **Runnable sample:** [`samples/ReliableWebhooks.Sample`](samples/ReliableWebhooks.Sample) — end-to-end integration using the public API.
-- **v1.0.0 scope:** [`docs/release-v1.0.0.md`](docs/release-v1.0.0.md) — release boundaries, distribution, and supported surface.
-- **Security policy:** [`SECURITY.md`](SECURITY.md) — supported security reporting process and project security guidance.
+- **Production usage:** [`docs/production-usage.md`](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/docs/production-usage.md) — DI/hosting, retry and response classification, signing and receiver verification, destination security, observability, configuration, tuning, and troubleshooting.
+- **Persistence contract:** [`docs/persistence.md`](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/docs/persistence.md) — durable state, idempotent enqueue, atomic claims, leases, ownership, transitions, and conformance testing.
+- **Runnable sample:** [`samples/ReliableWebhooks.Sample`](https://github.com/rodri-oliveira-dev/ReliableWebhooks/tree/main/samples/ReliableWebhooks.Sample) — end-to-end integration using the public API.
+- **v1.0.0 scope:** [`docs/release-v1.0.0.md`](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/docs/release-v1.0.0.md) — release boundaries, distribution, and supported surface.
+- **Security policy:** [`SECURITY.md`](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/SECURITY.md) — supported security reporting process and project security guidance.
 
 ## Extensibility
 
@@ -131,8 +131,8 @@ The core behaviors are exposed through replaceable abstractions, including persi
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for local development, validation, and contribution guidance.
+See [`CONTRIBUTING.md`](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/CONTRIBUTING.md) for local development, validation, and contribution guidance.
 
 ## License
 
-ReliableWebhooks is licensed under the [MIT License](LICENSE).
+ReliableWebhooks is licensed under the [MIT License](https://github.com/rodri-oliveira-dev/ReliableWebhooks/blob/main/LICENSE).
