@@ -43,25 +43,7 @@ Este exemplo mínimo usa o store em memória para poder executar sem infraestrut
 
 ```csharp
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using ReliableWebhooks;
-
-HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
-
-builder.Services.AddSingleton<IWebhookDeliveryStore, InMemoryWebhookDeliveryStore>();
-
-ReliableWebhooksBuilder webhooks = builder.Services.AddReliableWebhooks(options =>
-{
-    options.Dispatcher.MaxConcurrency = 4;
-});
-
-webhooks.AddHostedDispatcher();
-
-using IHost host = builder.Build();
-
-IWebhookEnqueueService enqueue =
-    host.Services.GetRequiredService<IWebhookEnqueueService>();
 
 byte[] payload = JsonSerializer.SerializeToUtf8Bytes(new
 {
@@ -76,8 +58,35 @@ var message = new WebhookMessage(
     payload: payload,
     contentType: "application/json");
 
-await enqueue.EnqueueAsync(message);
-await host.RunAsync();
+IWebhookDeliveryStore store = new InstrumentedWebhookDeliveryStore(
+    new InMemoryWebhookDeliveryStore());
+
+await store.EnqueueAsync(message, DateTimeOffset.UtcNow);
+
+using var handler = new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+    UseCookies = false,
+};
+
+using var httpClient = new HttpClient(handler);
+IWebhookDeliveryTransport transport = new WebhookHttpTransport(httpClient);
+IWebhookRetryPolicy retryPolicy = new DefaultWebhookRetryPolicy();
+
+var dispatcher = new WebhookDispatcher(
+    store,
+    transport,
+    retryPolicy,
+    new WebhookDispatcherOptions
+    {
+        MaxConcurrency = 4,
+        LeaseDuration = TimeSpan.FromMinutes(1),
+        PollInterval = TimeSpan.FromSeconds(1),
+        ShutdownGracePeriod = TimeSpan.FromSeconds(5),
+    });
+
+using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+await dispatcher.RunAsync(stop.Token);
 ```
 
 `AddHostedDispatcher()` é opt-in. A aplicação também pode resolver e executar `WebhookDispatcher` diretamente quando precisa controlar seu ciclo de vida.
