@@ -17,7 +17,7 @@ Use-a quando um `POST` HTTP não é suficiente: as entregas precisam sobreviver 
 - Com um `IWebhookDeliveryStore` **durável** e aderente ao contrato, o modelo de entrega pretendido é **at-least-once**.
 - ReliableWebhooks **não** garante entrega exactly-once. Receivers precisam ser idempotentes e tolerar duplicidades.
 - O pacote core **não** inclui um store durável de produção. A durabilidade após reinício do processo depende do store fornecido e configurado pela aplicação consumidora.
-- `InMemoryWebhookDeliveryStore` é local ao processo e serve apenas para testes, samples e desenvolvimento local.
+- `InMemoryWebhookDeliveryStore` é local ao processo, **não é durável**, e serve apenas para testes, samples e desenvolvimento local.
 - Uma chamada a `IWebhookDeliveryTransport.SendAsync` representa uma tentativa HTTP; o agendamento de retries é tratado separadamente pela política de retry e pelo dispatcher.
 - Replay automático de dead letters, idempotência no receiver e política de rotação de secrets continuam sendo responsabilidades da aplicação.
 
