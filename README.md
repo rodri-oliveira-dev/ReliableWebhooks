@@ -17,7 +17,7 @@ Use it when an HTTP `POST` is not enough: deliveries must survive failures, coor
 - With a conforming **durable** `IWebhookDeliveryStore`, the intended delivery model is **at-least-once**.
 - ReliableWebhooks does **not** guarantee exactly-once delivery. Receivers must be idempotent and tolerate duplicates.
 - The core package does **not** ship a production durable store. Durability across process restarts depends on the store supplied and configured by the consuming application.
-- `InMemoryWebhookDeliveryStore` is process-local and intended only for tests, samples, and local development.
+- `InMemoryWebhookDeliveryStore` is process-local, **not durable**, and intended only for tests, samples, and local development.
 - One `IWebhookDeliveryTransport.SendAsync` call represents one HTTP attempt; retry timing is handled separately by the retry policy and dispatcher.
 - Automatic dead-letter replay, receiver-side idempotency, and secret-rotation policy remain application responsibilities.
 
