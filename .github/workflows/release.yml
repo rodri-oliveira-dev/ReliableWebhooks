@@ -52,7 +52,7 @@ env:
 jobs:
   build-and-pack:
     name: Validate, build, test and pack
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_OS || 'ubuntu-26.04' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -274,7 +274,7 @@ jobs:
     name: Create or verify release tag
     if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: build-and-pack
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_OS || 'ubuntu-26.04' }}
     permissions:
       contents: write
     outputs:
@@ -301,7 +301,7 @@ jobs:
     needs:
       - build-and-pack
       - ensure-release-tag
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_OS || 'ubuntu-26.04' }}
     timeout-minutes: 20
     environment: release
     permissions:
@@ -373,7 +373,7 @@ jobs:
     needs:
       - build-and-pack
       - ensure-release-tag
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_OS || 'ubuntu-26.04' }}
     timeout-minutes: 15
     environment: release
     permissions:
@@ -449,7 +449,7 @@ jobs:
       - ensure-release-tag
       - publish-nuget
       - publish-github-packages
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_OS || 'ubuntu-26.04' }}
     timeout-minutes: 15
     permissions:
       contents: write

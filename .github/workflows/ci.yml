@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build-test-pack:
     name: CI
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_OS || 'ubuntu-26.04' }}
 
     steps:
       - name: Checkout
@@ -128,6 +128,13 @@ jobs:
           if [ -n "$missing_version_comment" ]; then
             echo "Actions pinadas sem comentario de versao:"
             echo "$missing_version_comment"
+            exit 1
+          fi
+
+          legacy_linux_runners="$(grep -R -n -E '^[[:space:]]*runs-on:[[:space:]]*ubuntu-' .github/workflows || true)"
+          if [ -n "$legacy_linux_runners" ]; then
+            echo "Jobs Linux devem usar vars.RUNNER_OS com fallback versionado para ubuntu-26.04:"
+            echo "$legacy_linux_runners"
             exit 1
           fi
 
