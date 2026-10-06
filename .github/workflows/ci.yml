@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build-test-pack:
     name: CI
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_OS || 'ubuntu-26.04' }}
 
     steps:
       - name: Checkout
@@ -128,6 +128,55 @@ jobs:
           if [ -n "$missing_version_comment" ]; then
             echo "Actions pinadas sem comentario de versao:"
             echo "$missing_version_comment"
+            exit 1
+          fi
+
+          legacy_linux_runners="$(
+            python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          ubuntu_label = re.compile(r"(?<![A-Za-z0-9_.-])ubuntu-(?:latest|[0-9]{2}\.[0-9]{2})(?![A-Za-z0-9_.-])")
+          runs_on = re.compile(r"^(?P<indent>[ \t]*)runs-on[ \t]*:[ \t]*(?P<value>.*)$")
+
+          for workflow in sorted(Path(".github/workflows").glob("*.yml")):
+              lines = workflow.read_text(encoding="utf-8").splitlines()
+              index = 0
+              while index < len(lines):
+                  match = runs_on.match(lines[index])
+                  if match is None:
+                      index += 1
+                      continue
+
+                  value = match.group("value").strip()
+                  canonical_runner = "$" + "{{ vars.RUNNER_OS || 'ubuntu-26.04' }}"
+                  if value != canonical_runner and ubuntu_label.search(value):
+                      print(f"{workflow}:{index + 1}:{lines[index].strip()}")
+
+                  base_indent = len(match.group("indent").expandtabs(2))
+                  cursor = index + 1
+                  if match.group("value").strip() == "":
+                      while cursor < len(lines):
+                          candidate = lines[cursor]
+                          stripped = candidate.strip()
+                          if stripped == "" or stripped.startswith("#"):
+                              cursor += 1
+                              continue
+
+                          candidate_indent = len(candidate) - len(candidate.lstrip(" \t"))
+                          if candidate_indent <= base_indent:
+                              break
+
+                          if ubuntu_label.search(candidate):
+                              print(f"{workflow}:{cursor + 1}:{stripped}")
+                          cursor += 1
+
+                  index = max(index + 1, cursor)
+          PY
+          )"
+          if [ -n "$legacy_linux_runners" ]; then
+            echo "Jobs Linux devem usar vars.RUNNER_OS com fallback versionado para ubuntu-26.04:"
+            echo "$legacy_linux_runners"
             exit 1
           fi
 
