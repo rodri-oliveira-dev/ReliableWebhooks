@@ -148,7 +148,9 @@ jobs:
                       index += 1
                       continue
 
-                  if ubuntu_label.search(match.group("value")):
+                  value = match.group("value").strip()
+                  canonical_runner = "${{ vars.RUNNER_OS || 'ubuntu-26.04' }}"
+                  if value != canonical_runner and ubuntu_label.search(value):
                       print(f"{workflow}:{index + 1}:{lines[index].strip()}")
 
                   base_indent = len(match.group("indent").expandtabs(2))
