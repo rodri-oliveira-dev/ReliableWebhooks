@@ -149,7 +149,7 @@ jobs:
                       continue
 
                   value = match.group("value").strip()
-                  canonical_runner = "${{ vars.RUNNER_OS || 'ubuntu-26.04' }}"
+                  canonical_runner = "$" + "{{ vars.RUNNER_OS || 'ubuntu-26.04' }}"
                   if value != canonical_runner and ubuntu_label.search(value):
                       print(f"{workflow}:{index + 1}:{lines[index].strip()}")
 
