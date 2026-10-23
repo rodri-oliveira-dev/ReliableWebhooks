@@ -1,45 +1,33 @@
+# One weekly Dependabot version-update PR across NuGet, .NET SDK, and GitHub Actions.
+# Central SDK synchronization (rodri-oliveira-dev/.github) is independent of Dependabot.
 version: 2
 
-updates:
-  - package-ecosystem: "nuget"
-    directory: "/"
+multi-ecosystem-groups:
+  weekly-dependencies:
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
       timezone: "America/Sao_Paulo"
-    open-pull-requests-limit: 5
-    groups:
-      minor-and-patch:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
+
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "weekly-dependencies"
+    open-pull-requests-limit: 1
 
   - package-ecosystem: "dotnet-sdk"
     directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:15"
-      timezone: "America/Sao_Paulo"
-    open-pull-requests-limit: 2
+    patterns:
+      - "*"
+    multi-ecosystem-group: "weekly-dependencies"
+    open-pull-requests-limit: 1
 
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:30"
-      timezone: "America/Sao_Paulo"
-    open-pull-requests-limit: 5
-    groups:
-      minor-and-patch:
-        applies-to: "version-updates"
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "weekly-dependencies"
+    open-pull-requests-limit: 1

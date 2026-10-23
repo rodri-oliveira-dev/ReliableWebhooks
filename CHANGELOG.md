@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Raised the minimum Microsoft.Extensions dependency versions used by the ReliableWebhooks NuGet package from 10.0.12 to 10.0.13 (including DependencyInjection.Abstractions, Hosting.Abstractions, Http, Logging.Abstractions, and Options).
+- Consumer applications that explicitly reference Microsoft.Extensions packages at 10.0.12 may encounter NuGet downgrade error `NU1605` after upgrading ReliableWebhooks. Update direct Microsoft.Extensions references, including `Microsoft.Extensions.DependencyInjection` when used, to 10.0.13 or later compatible versions before restoring the package.
+
 ## [1.0.0] - 2026-09-13
 
 ### Added
