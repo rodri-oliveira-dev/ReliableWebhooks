@@ -1,39 +1,33 @@
-# Dependabot groups updates by ecosystem; cross-ecosystem PR grouping is unsupported.
-# Keep SDK updates repository-local to ensure global.json continues receiving servicing fixes.
+# One weekly Dependabot version-update PR across NuGet, .NET SDK, and GitHub Actions.
+# Central SDK synchronization (rodri-oliveira-dev/.github) is independent of Dependabot.
 version: 2
 
-updates:
-  - package-ecosystem: "nuget"
-    directory: "/"
+multi-ecosystem-groups:
+  weekly-dependencies:
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
       timezone: "America/Sao_Paulo"
+
+updates:
+  - package-ecosystem: "nuget"
+    directory: "/"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "weekly-dependencies"
     open-pull-requests-limit: 1
-    groups:
-      all-nuget-dependencies:
-        patterns:
-          - "*"
 
   - package-ecosystem: "dotnet-sdk"
     directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:15"
-      timezone: "America/Sao_Paulo"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "weekly-dependencies"
     open-pull-requests-limit: 1
 
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:30"
-      timezone: "America/Sao_Paulo"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "weekly-dependencies"
     open-pull-requests-limit: 1
-    groups:
-      all-github-actions:
-        patterns:
-          - "*"
