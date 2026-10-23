@@ -40,8 +40,17 @@ EOF
 dotnet add "$dotnet_project" package ReliableWebhooks \
   --version "$version" >/dev/null
 
+# Use the matching Microsoft.Extensions package version from central package management.
+# A stale explicit version causes NU1605 once dependencies advance.
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+di_version="$(sed -nE 's/^[[:space:]]*<PackageVersion[[:space:]]+Include="Microsoft.Extensions.DependencyInjection.Abstractions"[[:space:]]+Version="([^"]+)".*/\1/p' "$repository_root/Directory.Packages.props")"
+if [[ -z "$di_version" ]]; then
+  echo "Could not resolve Microsoft.Extensions.DependencyInjection.Abstractions version from Directory.Packages.props." >&2
+  exit 1
+fi
+
 dotnet add "$dotnet_project" package Microsoft.Extensions.DependencyInjection \
-  --version 10.0.12 >/dev/null
+  --version "$di_version" >/dev/null
 
 cat > "$consumer/Program.cs" <<'EOF'
 using Microsoft.Extensions.DependencyInjection;
