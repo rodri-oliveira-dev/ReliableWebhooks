@@ -9,6 +9,7 @@ multi-ecosystem-groups:
       day: "monday"
       time: "09:00"
       timezone: "America/Sao_Paulo"
+    open-pull-requests-limit: 1
 
 updates:
   - package-ecosystem: "nuget"
@@ -16,23 +17,15 @@ updates:
     patterns:
       - "*"
     multi-ecosystem-group: "weekly-dependencies"
-    open-pull-requests-limit: 1
 
   - package-ecosystem: "dotnet-sdk"
     directory: "/"
     patterns:
       - "*"
     multi-ecosystem-group: "weekly-dependencies"
-    open-pull-requests-limit: 1
 
   - package-ecosystem: "github-actions"
     directory: "/"
     patterns:
       - "*"
     multi-ecosystem-group: "weekly-dependencies"
-    open-pull-requests-limit: 1
-    # Agrupa init/analyze para evitar versões CodeQL incompatíveis.
-    groups:
-      codeql-action:
-        patterns:
-          - "github/codeql-action/*"
