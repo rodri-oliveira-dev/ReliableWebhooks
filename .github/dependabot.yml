@@ -31,3 +31,8 @@ updates:
       - "*"
     multi-ecosystem-group: "weekly-dependencies"
     open-pull-requests-limit: 1
+    # Agrupa init/analyze para evitar versões CodeQL incompatíveis.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
