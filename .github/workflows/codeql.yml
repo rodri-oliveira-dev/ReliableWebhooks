@@ -29,13 +29,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validar SHA das ações CodeQL
+        shell: bash
+        run: |
+          # Evita que init e analyze sejam executadas com versões divergentes.
+          codeql_shas=$(grep -Eo 'github/codeql-action/[^@ ]+@[0-9a-f]{40}' .github/workflows/codeql.yml | cut -d@ -f2 | sort -u | wc -l)
+          if [ "$codeql_shas" -ne 1 ]; then
+            echo "::error::Todas as ações CodeQL devem utilizar o mesmo commit SHA."
+            exit 1
+          fi
+
       - name: Configurar .NET pelo global.json
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
         with:
           global-json-file: global.json
 
       - name: Inicializar CodeQL
-        uses: github/codeql-action/init@4c0873ef8656cb3c50b3f42fb63bc1ade0cfa827 # v4
+        uses: github/codeql-action/init@ce8b5602e2e75eddc698f13db2342ef698999255 # v4
         with:
           languages: csharp
           build-mode: manual
@@ -48,6 +58,6 @@ jobs:
         run: dotnet build ReliableWebhooks.slnx --configuration Release --no-restore
 
       - name: Executar análise CodeQL
-        uses: github/codeql-action/analyze@4c0873ef8656cb3c50b3f42fb63bc1ade0cfa827 # v4
+        uses: github/codeql-action/analyze@ce8b5602e2e75eddc698f13db2342ef698999255 # v4
         with:
           category: '/language:csharp'
