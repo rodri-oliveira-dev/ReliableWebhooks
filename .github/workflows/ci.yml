@@ -37,6 +37,16 @@ jobs:
       - name: Listar ferramentas locais
         run: dotnet tool list --local
 
+      - name: Diagnóstico temporário - regenerar lock do sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet restore ReliableWebhooks.slnx --force-evaluate
+          echo '===SAMPLE_LOCK_START==='
+          cat samples/ReliableWebhooks.Sample/packages.lock.json
+          echo '===SAMPLE_LOCK_END==='
+          exit 1
+
       - name: Restaurar dependências em locked mode
         run: dotnet restore ReliableWebhooks.slnx --locked-mode
 
